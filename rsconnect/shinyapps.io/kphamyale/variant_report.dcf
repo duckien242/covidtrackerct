@@ -1,0 +1,14 @@
+name: variant_report
+title: variant_report
+username:
+account: kphamyale
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 6533778
+bundleId: 6047702
+url: https://kphamyale.shinyapps.io/variant_report/
+when: 1656353514.70176
+lastSyncTime: 1656353514.70177
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .R_outbreak-info-token|.RData|.RDataTmp|.RDataTmp1|.secrets/bb8565617b5e9996ff93e6d214ba7218_k.pham@yale.edu|code_check.R|colors.R|data-visualization-2.1.pdf|filter_data.R|gisaid.R|Lineage_Report.R|names.R|omit_authen.R|OutbreakInfo.R|PCR_trends.R|shiny-cheatsheet.pdf

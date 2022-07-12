@@ -1,0 +1,14 @@
+name: lineage_report
+title: lineage_report
+username:
+account: kphamyale
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 6348648
+bundleId: 6033378
+url: https://kphamyale.shinyapps.io/lineage_report/
+when: 1655926318.83561
+lastSyncTime: 1655926318.83562
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .R_outbreak-info-token|.RData|.RDataTmp|.secrets/bb8565617b5e9996ff93e6d214ba7218_k.pham@yale.edu|code_check.R|colors.R|data-visualization-2.1.pdf|filter_data.R|gisaid.R|Lineage_Report.R|omit_authen.R|OutbreakInfo.R|PCR_trends.R|shiny-cheatsheet.pdf|www/cover.png|backup
