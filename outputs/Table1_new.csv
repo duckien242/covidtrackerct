@@ -1,0 +1,20 @@
+"","WHO label","Pango lineage","CDC classification","Cumulative sequenced cases*","Total sequenced from past 3 weeks**","Percent sequenced from past 3 weeks**","Percent change from previous report"
+"1","Alpha","B.1.1.7","VBM",3516,0,0,0
+"2","Beta","B.1.351","VBM",42,0,0,0
+"3","Delta","B.1.617.2/AY.*","VOC",17293,0,0,0
+"4","Epsilon","B.1.427/429 ","VBM",218,0,0,0
+"5","Eta","B.1.525","VBM",18,0,0,0
+"6","Gamma","P.1","VBM",159,0,0,0
+"7","Iota","B.1.526","VBM",1601,0,0,0
+"8","Kappa","B.1.617.1","VBM",7,0,0,0
+"9","Lambda","C.37","none",21,0,0,0
+"10","Mu","B.1.621","VBM",124,0,0,0
+"11","Omicron (BA.1)","B.1.1.529/BA.1*","VOC",12370,0,0,0
+"12","Omicron (BA.2)","BA.2","VOC",8948,184,38.25,-24.38
+"13","Omicron (BA.3)","BA.3","VOC",0,0,0,0
+"14","Omicron (BA.4)","BA.4","VOC",194,60,12.47,3.38
+"15","Omicron (BA.5)","BA.5","VOC",562,235,48.86,20.58
+"16","Omicron (XE)","XE","VOC",3,0,0,0
+"17","Omicron (XQ)","XQ","VOC",0,0,0,0
+"18","Other","Non-VOC/VOI","none",3053,2,0.42,0.42
+"19","Zeta","P.2","VBM",9,0,0,0

@@ -1,6 +1,7 @@
 #PACKAGE INSTALL ####
-packages = c("dplyr","ggplot2","RColorBrewer","shiny","shinythemes","plotly","DT")
+packages = c("dplyr","tidyr","ggplot2","RColorBrewer","shiny","shinythemes","plotly","DT","lubridate","sf","data.table")
 library(readr)
+
 ## Now load or install&load all
 package.check <- lapply(
   packages,
@@ -16,70 +17,121 @@ rm(packages, package.check)
 
 set.seed(1234)
 
+# Set recent dates
+date_3_months = as.Date("2022-04-13")
+date_3_weeks = as.Date("2022-06-15") # CHANGE TO MOST RECENT 3 WEEKS
+date_gisaid = as.Date("2022-06-24") # FOR FILTERING GISAID DOWNLOAD
+
 ## Read metadata from gisaid
-path <- getwd()
-filename <- "gisaid_hcov-19.tsv"
-#metadata <- read_tsv(file = paste0(path, "/data/", filename))
-#metadata <- read_tsv(file = "metadata_nextstrain.tsv")
-#metadata_CT_all = metadata[metadata$`division` == "Connecticut",]
+metadata_CT_old = read.table("data/metadata_CT_all.tsv", sep = "\t", header = TRUE)
+metadata_CT_old$`Collection.date` <- as.Date(metadata_CT_old$`Collection.date`)
+new_genomes_title<-list.files('data',pattern = "gisaid",full.names = TRUE,recursive=TRUE,include.dirs=TRUE) # this will now be a list of all files with full paths.
+new_genomes = read.table(new_genomes_title, sep = "\t", header = TRUE)
+new_genomes$`Collection.date` <- as.Date(new_genomes$`Collection.date`)
+metadata_CT_all = rbind(metadata_CT_old,new_genomes)
+metadata_CT_all = subset(metadata_CT_all, !duplicated(subset(metadata_CT_all, select=c(`Accession.ID`)))) # remove duplicate sequences
+write_tsv(metadata_CT_all,"data/metadata_CT_all.tsv") # write tsv file for next week
+write_tsv(metadata_CT_all,"backup/metadata_CT_all.tsv") # write tsv file for next week
 
-metadata_CT_all = read.csv("data/metadata_CT_all.csv")
-metadata_CT_all = metadata_CT_all[,-c(1)]
-
+metadata_CT_all$pango_lineage <- metadata_CT_all$Lineage
 metadata_CT_all["pango_lineage"][metadata_CT_all["pango_lineage"] == "BA.2.12.1 (marker override: BA.2.12 + Spike_L452Q => BA.2.12.1)"] = "BA.2.12.1"
-metadata_CT_recent = metadata_CT_all[metadata_CT_all$`date` >= "2022-03-22",] # filter by last 3 months
-metadata_CT_recent =  metadata_CT_recent[!is.na(metadata_CT_recent$`pango_lineage`),]
 
-metadata_CT_all$`date` <- as.Date(metadata_CT_all$`date`)
-metadata_CT_all <- metadata_CT_all %>% mutate(CopyDate = `date`)
+metadata_CT_all <- metadata_CT_all %>% mutate(CopyDate = `Collection.date`)
 metadata_CT_all <- metadata_CT_all %>% group_by(`week` = cut(`CopyDate`, "week"))
 metadata_CT_all$week <- as.Date(metadata_CT_all$week)
 #delete data without week assigned
 metadata_CT_all <- metadata_CT_all[!is.na(metadata_CT_all$`week`),]
 
-#write.csv(metadata_CT_all,"data/metadata_CT_all.csv")
+metadata_CT_recent = metadata_CT_all[metadata_CT_all$`Collection.date` >= date_3_months,] # filter by last 3 months
+metadata_CT_recent =  metadata_CT_recent[!is.na(metadata_CT_recent$`pango_lineage`),]
 # fix weird BA.2.12.1 lineage name call
 
 # Lineages daily frequency
-length(unique(metadata_CT_recent$pango_lineage))
+length(unique(metadata_CT_recent$Lineage))
+metadata_CT_recent$`CopyDate` = as.character(metadata_CT_recent$`CopyDate`)
 
-lineages_daily <- metadata_CT_recent %>% group_by(`date`) %>% count(pango_lineage) %>%
-  mutate(freq = round(n/sum(n),2)) %>%
-  subset(freq > 0.05)
+metadata_CT_recent = metadata_CT_recent[-c(which(metadata_CT_recent$`Collection.date` == max(metadata_CT_recent$`Collection.date`))),] # omit latest 3 days
+metadata_CT_recent = metadata_CT_recent[-c(which(metadata_CT_recent$`Collection.date` == max(metadata_CT_recent$`Collection.date`))),] # omit latest 3 days
+metadata_CT_recent = metadata_CT_recent[-c(which(metadata_CT_recent$`Collection.date` == max(metadata_CT_recent$`Collection.date`))),] # omit latest 3 days
 
-# set cut off for date
-date = aggregate(lineages_daily$n, by = list(lineages_daily$`date`), FUN = sum)
+lineages_daily_draft <- metadata_CT_recent %>% complete(`Collection.date`, nesting(`pango_lineage`), fill = list(CopyDate = 0))
+lineages_daily_draft$`CopyDate` = ifelse(lineages_daily_draft$`CopyDate` == 0,0,1)
+
+lineages_sum <- metadata_CT_recent %>% group_by(`pango_lineage`) %>% count(pango_lineage)  %>%
+  filter(n > 5)
+rownames(lineages_sum) = lineages_sum$pango_lineage
+
+lineages_daily_draft$`pango_lineage` = ifelse(lineages_daily_draft$`pango_lineage`%in% rownames(lineages_sum),lineages_daily_draft$`pango_lineage`,"Other")
+
+lineages_daily <- lineages_daily_draft %>% group_by(`Collection.date`,`pango_lineage`) %>% 
+  summarise_at(vars(`CopyDate`),list(n = sum)) %>%
+  mutate(freq = round(100*n/sum(n),2)) 
+#  filter(`pango_lineage`%in% rownames(lineages_sum))
+
 
 # plot
-lineage_plot = ggplot(lineages_daily,aes(x=`date`,y=freq, group=pango_lineage, color = pango_lineage)) +
+lineage_col = c("#000000","#f90808","#f96708","#f9a508",
+                "#f1d326","#ffff0d","#daff0d","#ebe7e7",
+                "#ffe0d8","#ffe7d8","#fff2d8","#fff9d8","#d3d7fe","#f6fed3","#e3fed3",
+                "#fffed8","#f9ffd8","#edffd8","#d8ffdc", "#f5e5fa","#faf5e5","#faede5","#d3fcfe",
+                "#d8fff4","#d8fdff","#d8f3ff","#d8e2ff","#d0cdff","#f0cdff","#fce2fc","#eaede9",
+                "#f1f1e4","#f1fffd","#f1faff","#f5f1ff","#fff1f1","#fffbf1")
+lineages_daily_sorted = lineages_daily[order(-lineages_daily$freq),]
+lineages_names = unique(lineages_daily_sorted$`pango_lineage`)
+names(lineage_col) <- lineages_names
+rm(x,col,lineages_names,lineages_daily_draft)
+
+lineage_plot = ggplot(lineages_daily,aes(x=`Collection.date`,y=freq, group=pango_lineage, color = pango_lineage)) +
   geom_line() +
   labs(
-    title = "Lineage frequencies in Connecticut in the last 3 months",
-    y = "Lineage frequency"
-  ) + 
-  scale_color_brewer(type = "seq", palette = "Spectral") +
+    title = "Daily lineage frequencies in Connecticut (last 3 months)",
+    y = "Lineage frequency (%)",
+    x = "Time (days)",
+    subtitle = "% for lattest week shown subject to change"
+  )+
+  theme_light() + 
+  scale_color_manual(values=lineage_col) +
+ # scale_x_discrete(breaks = c("2022-04-01","2022-05-01","2022-06-01")) +
+  #scale_color_brewer(type = "seq", palette = "Spectral") +
   theme(
-    plot.title = element_text(face = "bold", size = 12)
-  ) +
-  theme_light()
+    plot.title = element_text(face = "bold", size = 12) ,
+      axis.text.x = element_text(hjust = 1, size = 10, color = "black")
+  ) 
 ggplotly(lineage_plot)
 
 
 # mix and match
 names = read.csv("data/variant_names.csv")
 # metadata_CT_all$who_variants = NA
-# metadata_CT_all$who_variants[names$pango_variants == metadata_CT_all$pango_lineage] <- names$who_variants[names$pango_variants == metadata_CT_all$pango_lineage]
+# metadata_CT_all$who_variants[names$pango_variants == metadata_CT_all$Lineage] <- names$who_variants[names$pango_variants == metadata_CT_all$Lineage]
 metadata_CT_who = merge(metadata_CT_all,names[,c("pango_lineage","who_variants")], by = "pango_lineage", all.x = TRUE)
-#metadata_CT_all$who_names <- names[match(metadata_CT_all$pango_lineage,names$pango_variants),2]
-metadata_CT_who[which(is.na(metadata_CT_who$who_variants)),31] <- 'Other'
-metadata_CT_who[which(metadata_CT_who$who_variants == "Eta"),31] <- 'Other'
-metadata_CT_who[which(metadata_CT_who$who_variants == "Kappa"),31] <- 'Other'
-metadata_CT_who[which(metadata_CT_who$who_variants == "Zeta"),31] <- 'Other'
-metadata_CT_who[which(metadata_CT_who$who_variants == "Lambda"),31] <- 'Other'
+#metadata_CT_all$who_names <- names[match(metadata_CT_all$Lineage,names$pango_variants),2]
+
+cumulative <- metadata_CT_who %>% 
+  select(`Collection.date`,`who_variants`,`pango_lineage`) %>%
+  count(`who_variants`)
+colnames(cumulative) = c("WHO.label","Cumulative.sequenced.cases.")
+cumulative[which(is.na(cumulative$WHO.label)),1] <- "Other"
+
+last_3_weeks <- metadata_CT_who %>% 
+  select(`Collection.date`,`who_variants`,`pango_lineage`) %>%
+  subset(`Collection.date` >= date_3_weeks) %>% # update date every 3 weeks
+  count(`who_variants`) %>%
+  mutate(freq = round(100*n/sum(n),2)) 
+colnames(last_3_weeks) = c("WHO.label","Total.sequenced.from.past.3.weeks..","Percent.sequenced.from.past.3.weeks..")
+last_3_weeks[which(is.na(last_3_weeks$WHO.label)),1] <- "Other"
+
+metadata_CT_who[which(is.na(metadata_CT_who$who_variants)),length(colnames(metadata_CT_who))] <- 'Other'
+metadata_CT_who[which(metadata_CT_who$who_variants == "Eta"),length(colnames(metadata_CT_who))] <- 'Other'
+metadata_CT_who[which(metadata_CT_who$who_variants == "Kappa"),length(colnames(metadata_CT_who))] <- 'Other'
+metadata_CT_who[which(metadata_CT_who$who_variants == "Zeta"),length(colnames(metadata_CT_who))] <- 'Other'
+metadata_CT_who[which(metadata_CT_who$who_variants == "Lambda"),length(colnames(metadata_CT_who))] <- 'Other'
 
 who_weekly <- metadata_CT_who %>% group_by(`week`) %>% count(who_variants) %>%
   mutate(freq = round(n/sum(n),2)) 
 who_weekly = who_weekly[c(which(who_weekly$week > '2020-12-31')),] # omit first few days
+who_weekly = who_weekly[-c(which(who_weekly$week == max(who_weekly$week))),] # omit latest week
+who_weekly$`Variant names` = who_weekly$who_variants
 
 who_colors = c("Other" = "#c4c1c0",
                "Alpha" = "#1160f6",
@@ -96,7 +148,7 @@ who_colors = c("Other" = "#c4c1c0",
                "Omicron (BA.5)" = "#d04805"
                )
 who_plot = ggplot(who_weekly,aes(x=`week`,y=freq, group = who_variants, color = who_variants)) +
-  geom_line() +
+  geom_line(size = 0.6) +
   labs(
     title = "Weekly variant frequencies in Connecticut (since January 2021)",
     y = "Variant frequency"
@@ -111,24 +163,15 @@ ggplotly(who_plot)
 
 # attempts at Table 1
 table1_old = read.csv("data/Table1.csv")
-cumulative <- metadata_CT_who %>% 
-  select(`date`,`who_variants`,`pango_lineage`) %>%
-  group_by() %>% count(`who_variants`)
-colnames(cumulative) = c("WHO.label","Cumulative.sequenced.cases.")
+table1_old = table1_old[,-c(1)]
 
 tab = merge(table1_old,cumulative[,c("WHO.label","Cumulative.sequenced.cases.")], by = "WHO.label", all.x = TRUE)
-
-last_3_weeks <- metadata_CT_who %>% 
-  select(`date`,`who_variants`,`pango_lineage`) %>%
-  subset(`date` >= "2022-06-02") %>% # update date every 3 weeks
-  count(`who_variants`) %>%
-  mutate(freq = round(100*n/sum(n),2)) 
-colnames(last_3_weeks) = c("WHO.label","Total.sequenced.from.past.3.weeks..","Percent.sequenced.from.past.3.weeks..")
 
 table1_new = merge(tab,last_3_weeks[,c("WHO.label","Total.sequenced.from.past.3.weeks..","Percent.sequenced.from.past.3.weeks..")], by = "WHO.label", all.x = TRUE)
 table1_new[is.na(table1_new)] <- 0
 table1_new$`Percent.change.from.previous.report.y` = table1_new$`Percent.sequenced.from.past.3.weeks...y` - table1_new$`Percent.sequenced.from.past.3.weeks...x`
 table1_new = table1_new[,-c(4:7)]
+table1_new[which(table1_new$`WHO label` == 0),1] <- "Other"
 colnames(table1_new) = c("WHO label",
                           "Pango lineage",
                          "CDC classification",
@@ -139,42 +182,60 @@ colnames(table1_new) = c("WHO label",
 write.csv(table1_new,"data/Table1_new.csv")
 
 
-# attempts at subsampler
-cases = read.table("data/matrix_cases_epiweeks.tsv", sep = "\t", header = TRUE)
-cases_CT = t(cases[which(cases$code == "CT"),])
-cases_CT_filt = cases_CT[-c(1:3)]
+###### %seq attempt ##########
+cases_path = list.files(path = "data/",pattern = "time_series*",full.names = TRUE,recursive=TRUE,include.dirs=TRUE)
+cases = fread(cases_path)
+cases_CT_t = cases %>%
+  filter(Province_State == "Connecticut") %>%
+  select(-c(UID,iso2,iso3,code3,FIPS,Admin2,Country_Region,Lat,Long_,Combined_Key,Province_State)) 
+cases_CT = tibble(apply(cases_CT_t,2,sum),mdy(colnames(cases_CT_t)))
+colnames(cases_CT) = c("case_cumulative","date")
 
-sampling = read.table("data/weekly_sampling_proportions.tsv", sep = "\t", header = TRUE)
-sampling_CT = t(sampling[which(sampling$code == "CT"),])
-sampling_CT_filt = sampling_CT[-c(1:3)]
+cases_CT_filt = cases_CT %>% 
+  mutate(CopyDate = `date`) %>%
+  mutate(case_count = case_cumulative - lag(case_cumulative)) %>%
+  group_by(`week` = cut(`CopyDate`, "week")) %>%
+  select(-c(`CopyDate`,`case_cumulative`)) 
+cases_CT_filt.dt = data.table(cases_CT_filt)
+cases_CT_filt.dt = cases_CT_filt.dt[,list(case_count=sum(case_count)), by='week']
+cases_CT_filt.dt = cases_CT_filt.dt[-c(1:which(cases_CT_filt.dt$week == "2020-12-28")),]
+cases_CT_filt.dt$week = as.Date(cases_CT_filt.dt$week)
 
-week_CT = sort(c(unique(metadata_CT_all$`week`),"2022-06-13","2022-06-20","2022-06-27"))
+seq_CT = metadata_CT_all %>%
+  group_by(`week`,`Collection.date`) %>%
+  count()
+seq_CT_filt.dt = data.table(seq_CT)
+seq_CT_filt.dt = seq_CT_filt.dt[,list(seq_count=sum(n)), by='week']
+seq_CT_filt.dt = seq_CT_filt.dt[-c(1:which(seq_CT_filt.dt$week == "2020-12-28")),]
 
-subsampler_draft = data.frame(week_CT,cases_CT_filt,sampling_CT_filt)
-subsampler = subsampler_draft[-c(1:41),]
-subsampler$cases_CT_filt = as.numeric(subsampler$cases_CT_filt)
-subsampler$sampling_CT_filt = 100*as.numeric(subsampler$sampling_CT_filt)
+subsampler = merge(cases_CT_filt.dt,seq_CT_filt.dt, by = 'week',all.x = TRUE)
+subsampler[is.na(subsampler)] <- 0
+subsampler = subsampler %>%
+  mutate(percent = round(seq_count * 100/ case_count,2)) %>%
+  select(-c(seq_count))
 
-rm(cases_CT,cases_CT_filt,sampling,sampling_CT,sampling_CT_filt,week_CT)
+rm(cases,cases_CT,cases_CT_filt,seq_CT,cases_path)
 
 ylim.prim <- c(0, 70000)   
 ylim.sec <- c(0, 100)    
 b <- diff(ylim.prim)/diff(ylim.sec)
 a <- ylim.prim[1] - b*ylim.sec[1]
 
-subsampler_plot <- ggplot(subsampler, aes(x=`week_CT`)) +
-  geom_col(aes(y=cases_CT_filt), color = "darkblue") + 
-  geom_line(aes(y=sampling_CT_filt*b+a), color = "darkred") +
+subsampler_plot <- ggplot(subsampler, aes(x=`week`)) +
+  geom_col(aes(y=case_count), color = "darkblue", fill = "#e0f4ff") + 
+  geom_line(aes(y=percent*b+a), color = "red", size = 1.5) +
   #geom_line(aes(y=sampling_weekly_filtered*b+a), color = "darkred")+
+  labs(title = "Percentage (%) of COVID-19 cases sequenced in Connecticut",
+       x = "Time (weeks)")+
   xlab("Week") +
   scale_y_continuous("weekly cases", sec.axis = sec_axis(~ (. - a)/b, name = "%seq")) +
-  theme_classic() +
-  theme(axis.text.y.right = element_text(color = "darkred"), 
-        axis.title.y.right = element_text(color = "darkred"),
-        axis.text.y.left = element_text(color = "darkblue"), 
-        axis.title.y.left = element_text(color = "darkblue"),
-        axis.text.x = element_text(angle = 45, hjust = 1)) + 
-  ggtitle("Total COVID-19 cases in Connecticut") 
+  theme_light() +
+  theme(plot.title=element_text(size=30, face ="bold"),
+        axis.text.y.right = element_text(color = "darkred", size = 10), 
+        axis.title.y.right = element_text(color = "darkred", size = 10),
+        axis.text.y.left = element_text(color = "darkblue", size = 10), 
+        axis.title.y.left = element_text(color = "darkblue", size = 10),
+        axis.text.x = element_text(angle = 45, hjust = 1)) 
 subsampler_plot
 
 
@@ -203,3 +264,9 @@ Ct_graph <- ggplot(data = Ct_values, aes(x= `Ctvals`, y = as.numeric(`Yale.N1.FA
                         axis.title=element_text(size=12, face ="bold"),title=element_text(size=14, face ="bold"))
 ggplotly(Ct_graph) 
 
+
+####### Mapping attempt #########
+ct_map = sf::st_read("data/tl_2019_09_cousub/tl_2019_09_cousub.shp")
+m <- leaflet() %>%
+  addPolygons(data=ct_map, col="black", weight = 1, layerId = ~id, label = ct_map$`NAME`, 
+              highlight = highlightOptions(color = "blue",weight = 2, bringToFront = F, opacity = 0.7))
