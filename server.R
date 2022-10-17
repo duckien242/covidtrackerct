@@ -6,21 +6,13 @@
 #email k.pham@yale.edu or duckien242@gmail.com
 #to be updated Tuesday afternoons
 
-
-########################################################
-##### SET RECENT DATES (CHANGE FOR WEEKLY BUILD) #######
-
-date_3_months = as.Date("2022-04-13") # CHANGE TO MOST RECENT 3 MONTHS
-date_3_weeks = as.Date("2022-06-22") # CHANGE TO MOST RECENT 3 WEEKS
-date_gisaid = as.Date("2022-06-24") # FOR FILTERING GISAID DOWNLOAD
-total_sequences = 17292 # SEARCH "YALE" ON GISAID
-
 ########################################################
 
 # I. PACKAGE INSTALL ####
-packages = c("dplyr","tidyr","ggplot2","RColorBrewer","shiny","shinythemes","plotly","DT","data.table")
-library(readr)
-library(lubridate)
+packages = c("dplyr","tidyr","ggplot2","RColorBrewer","shiny",
+             "shinythemes","plotly","DT","data.table",
+             "stats","ggpubr","stringr")
+
 ## Now load or install&load all
 package.check <- lapply(
   packages,
@@ -34,7 +26,25 @@ package.check <- lapply(
 
 rm(packages, package.check)
 
+library(purrr)
+library(readr)
+library(DescTools)
+library(lubridate)
+library(zoo)
+library(EpiEstim)
+library(ggpubr)
+library(httr)
+library(jsonlite)
+
 set.seed(1234)
+
+
+########################################################
+##### SET RECENT DATES (CHANGE FOR WEEKLY BUILD) #######
+
+date_3_months = as.Date(lubridate::today() - 92) # CHANGE TO MOST RECENT 3 MONTHS
+date_3_weeks = as.Date(lubridate::today() - 22) # CHANGE TO MOST RECENT 3 WEEKS
+date_gisaid = as.Date("2022-10-12") # FOR FILTERING GISAID DOWNLOAD
 
 # I.1. MULTIPLOT FUNCTION ####
 multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
@@ -76,7 +86,7 @@ multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
 ################# DATA CHECK LIST ######################
 
 # 1. full metadata file (in data folder, or download from gisaid & change to correct template in data folder, CODE TBA)
-# 2. cumulative case data (download from John Hopkins github: https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv)
+# 2. cumulative case data (download from John Hopkins github: https://raw.githubusercontent.com/CSSEGISandData/SARS-CoV-2/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv)
 # 3. Table 1: variant surveillance (template in data or backup folder)
 # 4. lab metadata file (for Ct value graph)
 # 5. variant name call file: to be updated weekly following pango releases: https://github.com/cov-lineages/pango-designation/
@@ -94,13 +104,21 @@ shinyServer(function(input,output){
   new_genomes_title<-list.files('data',pattern = "gisaid",full.names = TRUE,recursive=TRUE,include.dirs=TRUE) 
   new_genomes = read.table(new_genomes_title, sep = "\t", header = TRUE)
   new_genomes$`Collection.date` <- as.Date(new_genomes$`Collection.date`)
+  new_genomes = new_genomes %>%
+    filter(Collection.date > "2021-01-01")
   # concat new submissions to masterfile
   metadata_CT_all = rbind(metadata_CT_old,new_genomes)
+  metadata_CT_all = metadata_CT_all %>%
+    filter(Lineage != "") %>%
+    drop_na(Collection.date)
+  
   metadata_CT_all = subset(metadata_CT_all, !duplicated(subset(metadata_CT_all, select=c(`Accession.ID`)))) # remove duplicate sequences
+  
   write_tsv(metadata_CT_all,"data/metadata_CT_all.tsv") # write tsv file for next week
   
   metadata_CT_all$pango_lineage <- metadata_CT_all$Lineage
-  metadata_CT_all["pango_lineage"][metadata_CT_all["pango_lineage"] == "BA.2.12.1 (marker override: BA.2.12 + Spike_L452Q => BA.2.12.1)"] = "BA.2.12.1"
+  metadata_CT_all["pango_lineage"][metadata_CT_all["pango_lineage"] == "BA.2.75 (marker override based on Emerging Variants AA substitutions)"] = "BA.2.75"
+  metadata_CT_all["pango_lineage"][metadata_CT_all["pango_lineage"] == "BF.6 (marker override based on Emerging Variants AA substitutions)"] = "BF.6"
   
   # create week date column
   metadata_CT_all <- metadata_CT_all %>% mutate(CopyDate = `Collection.date`)
@@ -140,20 +158,75 @@ shinyServer(function(input,output){
   
 # III. Daily lineage freq in last 3 months #######
 
-  metadata_CT_recent$`CopyDate` = as.character(metadata_CT_recent$`CopyDate`)
+  metadata_CT_recent$`CopyDate` = as.numeric(metadata_CT_recent$`CopyDate`)
   # remove most recent 3 collection dates (inadequate data)
   metadata_CT_recent = metadata_CT_recent[-c(which(metadata_CT_recent$`Collection.date` == max(metadata_CT_recent$`Collection.date`))),] # omit latest 3 days
-  metadata_CT_recent = metadata_CT_recent[-c(which(metadata_CT_recent$`Collection.date` == max(metadata_CT_recent$`Collection.date`))),] # omit latest 3 days
-  metadata_CT_recent = metadata_CT_recent[-c(which(metadata_CT_recent$`Collection.date` == max(metadata_CT_recent$`Collection.date`))),] # omit latest 3 days
+  #metadata_CT_recent = metadata_CT_recent[-c(which(metadata_CT_recent$`Collection.date` == max(metadata_CT_recent$`Collection.date`))),] # omit latest 3 days 
+  #metadata_CT_recent = metadata_CT_recent[-c(which(metadata_CT_recent$`Collection.date` == max(metadata_CT_recent$`Collection.date`))),] # omit latest 3 days
   
   # have all lineages be displayed every day, ensuring no breaks when plotting
   lineages_daily_draft <- metadata_CT_recent %>% complete(`Collection.date`, nesting(`pango_lineage`), fill = list(CopyDate = 0))
   lineages_daily_draft$`CopyDate` = ifelse(lineages_daily_draft$`CopyDate` == 0,0,1) # for counting lineages
   
-  # find cumulative lineage scores & filter out minor lineages
-  lineages_sum <- metadata_CT_recent %>% group_by(`pango_lineage`) %>% count(pango_lineage)  %>%
-    filter(n > 5)
-  rownames(lineages_sum) = lineages_sum$pango_lineage
+  # find cumulative lineage scores & filter out minor lineages & assign colors
+  lineages_sum <- metadata_CT_recent %>% group_by(`pango_lineage`) %>% count(pango_lineage) 
+  lineages_sum = lineages_sum%>%
+    mutate(ShortLin = pango_lineage) 
+  lineages_sum = lineages_sum %>%
+    mutate(ShortLin = case_when(
+      endsWith(ShortLin, "2.12.1") ~ "BA.2.12.1",
+      startsWith(ShortLin, "BG") ~ "BA.2.12.1",
+      startsWith(ShortLin, "BA.2.75") ~ "BA.2.75",
+      startsWith(ShortLin, "BA.1") ~ "BA.1",
+      startsWith(ShortLin, "BA.2") ~ "BA.2",
+      startsWith(ShortLin, "BK") ~ "BA.2",
+      startsWith(ShortLin, "BP") ~ "BA.2",
+      startsWith(ShortLin, "BL") ~ "BA.2.75",
+      startsWith(ShortLin, "BH") ~ "BA.2",
+      startsWith(ShortLin, "BM") ~ "BA.2",
+      startsWith(ShortLin, "CH") ~ "BA.2",
+      startsWith(ShortLin, "BJ") ~ "BA.2",
+      startsWith(ShortLin, "BR") ~ "BA.2",
+      startsWith(ShortLin, "BA.4") ~ "BA.4",
+      startsWith(ShortLin, "BA.4.6") ~ "BA.4.6",
+      startsWith(ShortLin, "BA.5") ~ "BA.5",
+      startsWith(ShortLin, "BU") ~ "BA.5",
+      startsWith(ShortLin, "BV") ~ "BA.5",
+      startsWith(ShortLin, "BE") ~ "BA.5",
+      startsWith(ShortLin, "BT") ~ "BA.5",
+      startsWith(ShortLin, "BF") ~ "BA.5",
+      startsWith(ShortLin, "BQ") ~ "BA.5",
+      startsWith(ShortLin, "CN") ~ "BA.5",
+      startsWith(ShortLin, "CD") ~ "BA.5",
+      startsWith(ShortLin, "CE") ~ "BA.5",
+      startsWith(ShortLin, "CF") ~ "BA.5",
+      startsWith(ShortLin, "CL") ~ "BA.5",
+      startsWith(ShortLin, "CG") ~ "BA.5",
+      startsWith(ShortLin, "CK") ~ "BA.5",
+      startsWith(ShortLin, "BZ") ~ "BA.5",
+      TRUE ~ "Other"
+    ))
+  
+  
+  lineages_sum = lineages_sum %>%
+    mutate(color =  case_when(
+      ShortLin == "BA.1" ~ "#7e1cb9",
+      (ShortLin == "BA.2" & n >= quantile(lineages_sum$n)[5]) ~ "#c5f367", 
+      (ShortLin == "BA.2" & n < quantile(lineages_sum$n)[5] & n > quantile(lineages_sum$n)[3]) ~ "#faf994", 
+      (ShortLin == "BA.2" & n < quantile(lineages_sum$n)[3] ) ~ "#f8ffda", 
+      ShortLin == "BA.2.12.1" ~ "#78f0a1",
+      ShortLin == "BA.2.75" ~ "#3eb480",
+      ShortLin == "BA.4" ~ "#225fd6", 
+      ShortLin == "BA.4.6" ~ "#76e4f5", 
+      (ShortLin == "BA.5" & n >= quantile(lineages_sum$n)[5]) ~ "#ff6666", 
+      (ShortLin == "BA.5" & n < quantile(lineages_sum$n)[5] & n > quantile(lineages_sum$n)[4]) ~ "#fcaa99",
+      (ShortLin == "BA.2" & n < quantile(lineages_sum$n)[4] & n > quantile(lineages_sum$n)[3]) ~ "#faf994", 
+      (ShortLin == "BA.5" & n < quantile(lineages_sum$n)[3] ) ~ "#ffe4ee", 
+      TRUE ~ "#fef9f3"
+    )
+    )
+  row.names(lineages_sum) = lineages_sum$pango_lineage
+  
   
   # reclassify lineages, placing minor lineages as Other
   lineages_daily_draft$`pango_lineage` = ifelse(lineages_daily_draft$`pango_lineage`%in% rownames(lineages_sum),lineages_daily_draft$`pango_lineage`,"Other")
@@ -165,17 +238,93 @@ shinyServer(function(input,output){
   colnames(lineages_daily)[2] <- "Lineage names"
   
   # assign color palettes to lineages
-  lineage_col = c("#000000","#f90808","#f96708","#f9a508",
-                  "#f1d326","#ffff0d","#daff0d","#ebe7e7",
-                  "#ffe0d8","#ffe7d8","#fff2d8","#fff9d8","#d3d7fe","#f6fed3","#e3fed3",
-                  "#fffed8","#f9ffd8","#edffd8","#d8ffdc", "#f5e5fa","#faf5e5","#faede5","#d3fcfe",
-                  "#d8fff4","#d8fdff","#d8f3ff","#d8e2ff","#d0cdff","#f0cdff","#fce2fc","#eaede9",
-                  "#f1f1e4","#f1fffd","#f1faff","#f5f1ff","#fff1f1","#fffbf1")
+#  lineage_col = c("#000000","#f90808","#3341ef","#efef33",
+#                  "#26f1a4","#ffbd0d","#0de2ff","#ebe7e7",
+#                  "#ffe0d8","#d8fff3","#fff2d8","#fff9d8","#d3d7fe","#f6fed3","#e3fed3",
+#                  "#fffed8","#f9ffd8","#edffd8","#d8ffdc", "#f5e5fa","#faf5e5","#faede5","#d3fcfe",
+#                  "#d8fff4","#d8fdff","#d8f3ff","#d8e2ff","#d0cdff","#f0cdff","#fce2fc","#eaede9",
+#                  "#f1f1e4","#f1fffd","#f1faff","#f5f1ff","#fff1f1","#fffbf1","#fffbf1","#fffbf1","#fffbf1","#fffbf1","#fffbf1")
+  
+  # insert 3-day rolling average
+  lineages_daily = lineages_daily %>%
+    group_by(`Lineage names`) %>%
+    mutate(movavg = round(rollmean(freq, 3, na.pad = T),2)) 
+  
+  # sort by cumulative counts
   lineages_daily_sorted = lineages_daily[order(-lineages_daily$freq),]
-  lineages_names = unique(lineages_daily_sorted$`Lineage names`)
-  names(lineage_col) <- lineages_names
-  rm(lineages_names,lineages_daily_draft,lineages_sum)
-  write.csv(lineages_daily_sorted,"outputs/lineages_frequency_3_months.csv")
+
+  lineages_daily_sorted = lineages_daily_sorted %>%
+    mutate(ShortLin = `Lineage names`) 
+  lineages_daily_sorted = lineages_daily_sorted %>%
+    mutate(ShortLin = case_when(
+      endsWith(ShortLin, "2.12.1") ~ "BA.2.12.1",
+      startsWith(ShortLin, "BG") ~ "BA.2.12.1",
+      startsWith(ShortLin, "BA.2.75") ~ "BA.2.75",
+      startsWith(ShortLin, "BA.1") ~ "BA.1",
+      startsWith(ShortLin, "BA.2") ~ "BA.2",
+      startsWith(ShortLin, "BK") ~ "BA.2",
+      startsWith(ShortLin, "BP") ~ "BA.2",
+      startsWith(ShortLin, "BL") ~ "BA.2.75",
+      startsWith(ShortLin, "BH") ~ "BA.2",
+      startsWith(ShortLin, "BM") ~ "BA.2",
+      startsWith(ShortLin, "CH") ~ "BA.2",
+      startsWith(ShortLin, "BJ") ~ "BA.2",
+      startsWith(ShortLin, "BR") ~ "BA.2",
+      startsWith(ShortLin, "BA.4") ~ "BA.4",
+      startsWith(ShortLin, "BA.4.6") ~ "BA.4.6",
+      startsWith(ShortLin, "BA.5") ~ "BA.5",
+      startsWith(ShortLin, "BU") ~ "BA.5",
+      startsWith(ShortLin, "BV") ~ "BA.5",
+      startsWith(ShortLin, "BE") ~ "BA.5",
+      startsWith(ShortLin, "BT") ~ "BA.5",
+      startsWith(ShortLin, "BF") ~ "BA.5",
+      startsWith(ShortLin, "BQ") ~ "BA.5",
+      startsWith(ShortLin, "CN") ~ "BA.5",
+      startsWith(ShortLin, "CD") ~ "BA.5",
+      startsWith(ShortLin, "CE") ~ "BA.5",
+      startsWith(ShortLin, "CF") ~ "BA.5",
+      startsWith(ShortLin, "CL") ~ "BA.5",
+      startsWith(ShortLin, "CG") ~ "BA.5",
+      startsWith(ShortLin, "CK") ~ "BA.5",
+      startsWith(ShortLin, "BZ") ~ "BA.5",
+      TRUE ~ "Other"
+    ))
+  #names(lineage_col) <- lineages_names
+  rm(lineages_daily_draft)
+  write.csv(lineages_daily_sorted,"outputs/SARS-CoV-2 lineage frequency in Connecticut in the last 3 months.csv")
+
+  
+  # daily count plot
+  lineage_plot = ggplot(lineages_daily_sorted,aes(x=`Collection.date`,y=freq, group=`Lineage names`, color = `Lineage names`)) +
+    geom_line() +
+    labs(
+      title = "Daily lineage frequencies in Connecticut (last 3 months)",
+      y = "Lineage frequency (%)",
+      x = "Time (days)",
+      subtitle = "% for lattest week shown subject to change"
+    )+
+    theme_light() + 
+    scale_color_manual(values=lineages_sum$color) +
+    theme(
+      plot.title = element_text(size = 15) ,
+      axis.text.x = element_text(hjust = 1, size = 10, color = "black")
+    ) 
+  # moving avg plot
+  lineage_rollavg = ggplot(lineages_daily_sorted,aes(x=`Collection.date`,y=`movavg`, group=`Lineage names`, color = `Lineage names`)) +
+    geom_line() +
+    labs(
+      title = "Lineage frequencies in Connecticut (last 3 months): 3-day rolling average",
+      y = "Lineage frequency (%)",
+      x = "Time (days)",
+      subtitle = "% for lattest week shown subject to change"
+    )+
+    theme_light() + 
+    scale_color_manual(values=lineages_sum$color) +
+    theme(
+      plot.title = element_text(size = 15) ,
+      axis.text.x = element_text(hjust = 1, size = 10, color = "black")
+    ) 
+
 
 # IV. Weekly variant freq since Jan 2021 ###########
   
@@ -185,10 +334,41 @@ shinyServer(function(input,output){
   who_weekly = who_weekly[c(which(who_weekly$week > '2020-12-31')),] 
   # omit latest week (inadequate data)
   who_weekly = who_weekly[-c(which(who_weekly$week == max(who_weekly$week))),] 
-  who_weekly$`Variant names` = who_weekly$who_variants
-  write.csv(who_weekly,"outputs/variant_frequency.csv")
+  who_weekly$`Variant names` <- factor(who_weekly$who_variants, 
+                                       levels = c("Omicron (BA.5)",
+                                                  "Omicron (BA.4)",
+                                                  "Omicron (BA.2)",
+                                                  "Omicron (BA.1)",
+                                                  "Omicron (BA.3)",
+                                                  "Delta",
+                                                  "Alpha",
+                                                  "Iota",
+                                                  "Beta",
+                                                  "Gamma",
+                                                  "Lambda",
+                                                  "Epsilon",
+                                                  "Other"))
+  write.csv(who_weekly,"outputs/SARS-CoV-2 variant frequency in Connecticut.csv")
+  
+  who_colors = c("Other" = "#c4c1c0",
+                 "Alpha" = "#1160f6",
+                 "Delta" = "#11adf6",
+                 "Beta" = "#c81ac8",
+                 "Gamma" = "#c81ac8",
+                 "Lambda" = "#aef516",
+                 "Epsilon" = "#13d84f",
+                 "Iota" = "#05d0ab",
+                 "Mu" = "#9e5220",
+                 "Omicron (BA.1)" = "#f1fa30",
+                 "Omicron (BA.2)" = "#fdb902",
+                 "Omicron (BA.3)" = "#e58b00",
+                 "Omicron (BA.4)" = "#f47110", 
+                 "Omicron (BA.5)" = "#d04805"
+  )
+
   
 # V. Table 1 ########
+  
   # read last week's Table 1
   table1_old = read.csv("data/Table1.csv")
   table1_old = table1_old[,-c(1)]
@@ -198,7 +378,7 @@ shinyServer(function(input,output){
   table1_new = merge(tab,last_3_weeks[,c("WHO.label","Total.sequenced.from.past.3.weeks..","Percent.sequenced.from.past.3.weeks..")], by = "WHO.label", all.x = TRUE)
   table1_new[is.na(table1_new)] <- 0 # assign 0 to NA values
   # find changes since last week's report
-  table1_new$`Percent.change.from.previous.report.y` = table1_new$`Percent.sequenced.from.past.3.weeks...y` - table1_new$`Percent.sequenced.from.past.3.weeks...x`
+  table1_new$`Percent.change.from.previous.report.y` = round((table1_new$`Percent.sequenced.from.past.3.weeks...y` - table1_new$`Percent.sequenced.from.past.3.weeks...x`),2)
   table1_new = table1_new[,-c(4:7)]
   table1_new[which(table1_new$`WHO label` == 0),1] <- "Other"
   colnames(table1_new) = c("WHO label",
@@ -209,13 +389,17 @@ shinyServer(function(input,output){
                            "Percent sequenced from past 3 weeks**",
                            "Percent change from previous report")
   write.csv(table1_new,"data/Table1_new.csv")
-  write.csv(table1_new,"outputs/Table1_new.csv")
+  write.csv(table1_new,"outputs/Summary table of SARS-CoV-2 variant frequency.csv")
+  
+  recent_variants_count = length(which(table1_new$`Total sequenced from past 3 weeks**` != 0)) # find non-zero variants in past 3 weeks
   
 # VI. Subsampler ######
   
   # read cumulative case file
-  cases_path = list.files(path = "data/",pattern = "time_series*",full.names = TRUE,recursive=TRUE,include.dirs=TRUE)
-  cases = fread(cases_path)
+  #cases_path = list.files(path = "data/",pattern = "time_series*",full.names = TRUE,recursive=TRUE,include.dirs=TRUE)
+  #cases = fread(cases_path)
+  cases = fread("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv", sep = ",")
+  
   # filter for Connecticut & remove columns
   cases_CT_t = cases %>%
     filter(Province_State == "Connecticut") %>%
@@ -227,10 +411,15 @@ shinyServer(function(input,output){
     mutate(CopyDate = `date`) %>%
     mutate(case_count = case_cumulative - lag(case_cumulative)) %>%
     group_by(`week` = cut(`CopyDate`, "week")) %>%
-    select(-c(`CopyDate`,`case_cumulative`)) 
-  cases_CT_filt.dt = data.table(cases_CT_filt)
+    select(-c(`CopyDate`)) 
+  cases_CT_filt = data.table(cases_CT_filt)
+
   # sum rows by week to calculate weekly case count
-  cases_CT_filt.dt = cases_CT_filt.dt[,list(case_count=sum(case_count)), by='week']
+  cases_CT_filt_count = cases_CT_filt[,list(case_count=sum(case_count)), by='week']
+  # find cumulative case count by week
+  cases_CT_filt_cumu = cases_CT_filt[,list(case_cumulative=max(case_cumulative)), by='week']
+  # merge weekly count & cumulative count
+  cases_CT_filt.dt = merge(cases_CT_filt_count,cases_CT_filt_cumu, by = 'week')
   # filter out counts before 2021
   cases_CT_filt.dt = cases_CT_filt.dt[-c(1:which(cases_CT_filt.dt$week == "2020-12-28")),]
   cases_CT_filt.dt$week = as.Date(cases_CT_filt.dt$week)
@@ -242,6 +431,9 @@ shinyServer(function(input,output){
   seq_CT_filt.dt = data.table(seq_CT)
   # sum rows by week to calculate weekly sequence counts
   seq_CT_filt.dt = seq_CT_filt.dt[,list(seq_count=sum(n)), by='week']
+  # find cumulative sequence count
+  seq_CT_filt.dt = seq_CT_filt.dt %>%
+    mutate(seq_cumulative = cumsum(`seq_count`))
   # filter out counts before 2021
   seq_CT_filt.dt = seq_CT_filt.dt[-c(1:which(seq_CT_filt.dt$week == "2020-12-28")),]
   
@@ -250,35 +442,64 @@ shinyServer(function(input,output){
   subsampler[is.na(subsampler)] <- 0
   # calculate % sequenced & remove sequence counts
   subsampler = subsampler %>%
-    mutate(percent = round(seq_count * 100/ case_count,2)) %>%
-    select(-c(seq_count))
+    mutate(percent = round(seq_count * 100/ case_count,2)) 
   
-  rm(cases,cases_CT,cases_CT_filt,seq_CT,seq_CT_filt.dt,cases_CT_filt.dt,cases_path)
-  write.csv("outputs/subsampler.csv")
+  rm(cases,cases_CT,cases_CT_filt,seq_CT,cases_path,cases_CT_filt_cumu,cases_CT_filt_count,cases_CT_t, cases_CT_filt.dt, metadata_CT_old)
+  gc()
   
-  ylim.prim <- c(0, 70000)   
-  ylim.sec <- c(0, 100)    
-  b <- diff(ylim.prim)/diff(ylim.sec)
-  a <- ylim.prim[1] - b*ylim.sec[1]
+  # find log count
+  subsampler = subsampler %>%
+    mutate(log_cases = log(case_cumulative)) %>%
+    mutate(log_seq = log(seq_cumulative))
   
-  subsampler_plot <- ggplot(subsampler, aes(x=`week`)) +
-    geom_col(aes(y=case_count), color = "darkblue", fill = "#e0f4ff") + 
-    geom_line(aes(y=percent*b+a), color = "red", size = 1.5) +
-    labs(title = "Percentage (%) of COVID-19 cases sequenced in Connecticut",
-         x = "Time (weeks)")+
-    xlab("Week") +
-    scale_y_continuous("weekly cases", sec.axis = sec_axis(~ (. - a)/b, name = "%seq")) +
-    theme_light() +
-    theme(plot.title=element_text(size=30, face ="bold"),
-          axis.text.y.right = element_text(color = "darkred", size = 10), 
-          axis.title.y.right = element_text(color = "darkred", size = 10),
-          axis.text.y.left = element_text(color = "darkblue", size = 10), 
-          axis.title.y.left = element_text(color = "darkblue", size = 10),
-          axis.text.x = element_text(angle = 45, hjust = 1)) 
+  write.csv(subsampler,"outputs/SARS-CoV-2 case count and sequenced proportion in Connecticut.csv")
+  
+  ay2 <- list(
+    tickfont = list(size=11, color = "orange"),
+    titlefont=list(size=14.6, color = "orange"),
+    min = 0,
+    max = 100,
+    overlaying = "y",
+    nticks = 5,
+    side = "right",
+    title = "proportion of cases sequenced"
+  )
+  
+  ay1 <- list(
+    tickfont = list(size=11, color = "blue"),
+    titlefont=list(size=14.6, color = "blue"),
+    min = 0,
+    max = 100,
+    nticks = 5,
+    side = "left",
+    title = "case count"
+  )
+  
+  subsampler_plot = plot_ly(subsampler) %>%
+    add_bars(x = ~week, y = ~case_count, colors = "blue", 
+             name = "weekly cases",data = subsampler, showlegend=TRUE, inherit=FALSE) %>%
+    add_lines(x = ~week, y = ~percent, colors ="red", yaxis = "y2", 
+              name = "%seq",data = subsampler, showlegend=TRUE, inherit=FALSE) %>%
+    layout(title = "Proportion of SARS-CoV-2 cases sequenced in Connecticut",
+           yaxis = ay1,
+           yaxis2 = ay2)
+  
+  
+  subsampler_log = plot_ly(subsampler) %>%
+    add_trace(x = ~week, y = ~log_cases, colors = "blue", 
+              name = "log cumulative cases",data = subsampler, showlegend=TRUE, inherit=FALSE, mode = 'lines+markers') %>%
+    add_trace(x = ~week, y = ~log_seq, colors ="red", 
+              name = "log cumulative sequences",data = subsampler, showlegend=TRUE, inherit=FALSE, mode = 'lines+markers') %>%
+    layout(title = "Log cumulative SARS-CoV-2 cases and sequences in Connecticut",
+           yaxis = ay1)
+  
+
+  
   
 # VII. Ct Values by Lineages #############
   
   glab = read.csv("data/GLab_SC2_sequencing_data - Sample metadata.csv")
+  gc()
   ######Assign BA.1 vs BA.2 ######
   glab_filt <- glab %>% mutate(Ctvals = Lineage) 
   glab_filt$Ctvals <- substr(glab_filt$Ctvals, 1,4)
@@ -287,62 +508,353 @@ shinyServer(function(input,output){
   #include only samples with lineage assignments
   Ct_values <- glab_filt %>% dplyr::filter(`Ctvals` %in% c("BA.1", "BA.2","BA.4","BA.5"))
   rm(glab,glab_filt)
+  gc()
   
-######## IX. PLOTTING ##############
+  
+# VIII. Rt Values by Variant #############
+  
+  # Making API request using the GET() function and specifying the API’s URL:
+  url = paste("api2.covidestim.org/runs?geo_name=eq.Connecticut&run_date=gt.",lubridate::today() - 14,"&select=*%2Ctimeseries(*)",sep = "")
+  res = GET(url)
+  
+  # convert the raw Unicode into a character vector that resembles the JSON format to obtain case data
+  data = fromJSON(rawToChar(res$content))
+  infect_import = data[[8]][[1]]
+  rm(data,res,url)
+  
+  # filter columns for use
+  infect_import$run_id = "Connecticut"
+  colnames(infect_import)[1] <- "state"
+  infect = infect_import %>%
+    select(state,
+           date,
+           infections,
+           infections_p2_5,
+           infections_p97_5) %>%
+    #*****************************************
+    rename(week = date) %>% #rename for merging with var_data
+    mutate(week = as.Date(week))
+  
+  # variant frequency data (who_weekly obtained in shinyapp pipeline)
+  who_weekly_rt = who_weekly %>%
+    select(-c(`Variant names`)) %>%
+    mutate(week = week +3)  # create week to match
+  
+  who_weekly_rt = data.frame(who_weekly_rt)
+  var_data = reshape(who_weekly_rt, idvar = "week", timevar = "who_variants", direction = "wide")
+  var_data[is.na(var_data)] <- 0
+  var_data$state = "Connecticut"
+  
+  #*******************************************************************************
+  #####MERGE DATA#####
+  #*#*******************************************************************************
+  var_merge = var_data %>%
+    left_join(infect, by = c("week","state")) %>% #merges covidestim data with our data and keeps only 
+    filter(!is.na(infections)) %>%
+    select(-c(n.Other,freq.Other)) %>%
+    select_if(function(col)max(col) != 0) #drops variants that dont have any infections otherwise estimate_R will throw an error
+  
+ #create 7 replicates of week to create days
+  var_merge2 <- var_merge[rep(seq_len(nrow(var_merge)), 7), ]
+  
+  var_merge2_main <- var_merge2 %>%
+    arrange(week) %>% #arrange by week for creating the days
+    mutate(days = seq.Date(min(week), min(week)+nrow(.)-1, by = "days")) %>% #create variable for days
+    mutate_if(is.numeric,
+              .funs = ~./7) %>% #divide by 7 to convert weekly total to avg daily
+    mutate_at(vars(starts_with("freq")), 
+              .funs = ~.*7) %>% #revert freq back to original because freq is for the entire week
+    mutate_if(is.numeric, 
+              .funs = ~zoo::rollmean(., k = 7, fill = 0)) %>% #divide by 7 to get avg daily, roll mean to smooth
+    mutate_at(vars(starts_with("freq")), 
+              .funs = ~ifelse(. <= 0.05, 0, .)) %>% #remove 1 off sequences of variants to prevent wide Rt may need to be edited in the future to include
+    mutate(across(starts_with("freq"), 
+                  .fns = list("infections" = ~.*infections))) %>% #calculate variant specific number of infections
+    mutate_at(vars(ends_with("infections")), 
+              .funs = ~round(.,0)) #round infections to whole individuals 
+  
+  var_merge2_lowci <- var_merge2 %>%
+    arrange(week) %>% #arrange by week for creating the days
+    mutate(days = seq.Date(min(week), min(week)+nrow(.)-1, by = "days")) %>% #create variable for days
+    mutate_if(is.numeric,
+              .funs = ~./7) %>% #divide by 7 to convert weekly total to avg daily
+    mutate_at(vars(starts_with("freq")), 
+              .funs = ~.*7) %>% #revert freq back to original because freq is for the entire week
+    mutate_if(is.numeric, 
+              .funs = ~zoo::rollmean(., k = 7, fill = 0)) %>% #divide by 7 to get avg daily, roll mean to smooth
+    mutate_at(vars(starts_with("freq")), 
+              .funs = ~ifelse(. <= 0.05, 0, .)) %>% #remove 1 off sequences of variants to prevent wide Rt may need to be edited in the future to include
+    mutate(across(starts_with("freq"), 
+                  .fns = list("025" = ~.*infections_p2_5))) %>% #calculate variant specific number of infections (95lci)
+    mutate_at(vars(ends_with("infections")), 
+              .funs = ~round(.,0)) #round infections to whole individuals 
+  
+  var_merge2_upci <- var_merge2 %>%
+    arrange(week) %>% #arrange by week for creating the days
+    mutate(days = seq.Date(min(week), min(week)+nrow(.)-1, by = "days")) %>% #create variable for days
+    mutate_if(is.numeric,
+              .funs = ~./7) %>% #divide by 7 to convert weekly total to avg daily
+    mutate_at(vars(starts_with("freq")), 
+              .funs = ~.*7) %>% #revert freq back to original because freq is for the entire week
+    mutate_if(is.numeric, 
+              .funs = ~zoo::rollmean(., k = 7, fill = 0)) %>% #divide by 7 to get avg daily, roll mean to smooth
+    mutate_at(vars(starts_with("freq")), 
+              .funs = ~ifelse(. <= 0.05, 0, .)) %>% #remove 1 off sequences of variants to prevent wide Rt may need to be edited in the future to include
+    mutate(across(starts_with("freq"), 
+                  .fns = list("975" = ~.*infections_p97_5))) %>% #calculate variant specific number of infections (95uci)
+    mutate_at(vars(ends_with("infections")), 
+              .funs = ~round(.,0)) #round infections to whole individuals 
+  
+  var_merge3_main = var_merge2_main %>%
+    select(days, ends_with(c("infections"))) %>% #remove unnecessary columns
+    select_if(function(col) max(col) != 0) %>% #removes variants with no infections (after freq <= -.0.02) and thus no frequency
+    pivot_longer(cols = c(starts_with("freq")), values_to = "I", names_to = "variant") %>% #pivot longer to split by variant for estimate_R
+    mutate(variant = str_remove(variant, "freq\\.")) %>% #removed because it is annoying
+    arrange(variant)
+  
+  var_merge3_lowci = var_merge2_lowci %>%
+    select(days, ends_with(c("025"))) %>% #remove unnecessary columns
+    select_if(function(col) max(col) != 0) %>% #removes variants with no infections (after freq <= -.0.02) and thus no frequency
+    pivot_longer(cols = c(starts_with("freq")), values_to = "I", names_to = "variant") %>% #pivot longer to split by variant for estimate_R
+    mutate(variant = str_remove(variant, "freq\\.")) %>% #removed because it is annoying
+    mutate(variant = str_remove(variant, ".025")) %>% #removed because it is annoying
+    arrange(variant)
+  
+  var_merge3_upci = var_merge2_upci %>%
+    select(days, ends_with(c("975"))) %>% #remove unnecessary columns
+    select_if(function(col) max(col) != 0) %>% #removes variants with no infections (after freq <= -.0.02) and thus no frequency
+    pivot_longer(cols = c(starts_with("freq")), values_to = "I", names_to = "variant") %>% #pivot longer to split by variant for estimate_R
+    mutate(variant = str_remove(variant, "freq\\.")) %>% #removed because it is annoying
+    mutate(variant = str_remove(variant, ".975")) %>% #removed because it is annoying
+    arrange(variant)
+  
+  colnames(var_merge3_lowci)[which(colnames(var_merge3_lowci)  == "I" )] <- 'I_025'
+  colnames(var_merge3_upci)[which(colnames(var_merge3_upci)  == "I" )] <- 'I_975'
+  
+  #creates list of dataframes by variant for calculating estimate_R
+  var_list = var_merge3_main %>%
+    group_by(variant) %>%
+    arrange(variant) %>%
+    group_split()
+  
+  var_name = unique(var_merge3_main$variant)
+  
+  rm(var_merge2_lowci,var_merge2_main,var_merge2_upci)
+  gc()
+  
+  #*******************************************************************************
+  #RT FUNCTION ####
+  #*#******************************************************************************
+  
+  #Rt Calculation
+  #generates Rt calculation, smooths the line then merges with 
+  #the other variant data in a dataframe
+  
+  #run for everything -Other
+  rt_fun= function(df){
+    
+    non0 <- min(which(df$I > 0)) #1st day with infections of variant to start the R estimate otherwise R estimate artificially high
+    end0 <- max(which(df$I > 0)) #last day with infections of variant to start the R estimate otherwise R estimate artificially high
+    df2 = df[non0:end0,] #dataframe filtered where there is the first case of variant
+    
+    
+    #input of interval for R estimate
+    t_start<-seq(2, nrow(df2)-21) 
+    t_end<- t_start + 21
+    
+    config <- make_config(list(mean_si = 3.5, std_mean_si = 1, min_mean_si = 1, max_mean_si = 6, # estimates for SARS-CoV-2 serial interval
+                               std_si = 1, std_std_si = 0.5, min_std_si = 0.5, max_std_si = 1.5,
+                               n1= 80, n2=20, t_start=t_start, t_end=t_end)
+    )
+    
+    mean_Rt = estimate_R(df2$I, #will search for column named I which was created in the ci_fun but explicitly named here
+                         method="uncertain_si",
+                         config = config)
+    
+    #adds back in days that were filtered out to match the days in the main dataframe
+    mean_Rt$R$t_start = mean_Rt$R$t_start + non0 
+    mean_Rt$R$t_end = mean_Rt$R$t_end + non0
+    
+    # #binds them into a dataframe
+    rt_df<-cbind.data.frame(day = mean_Rt$R$t_start,
+                            Rt = mean_Rt$R$`Mean(R)`,
+                            rtlowci = mean_Rt$R$`Quantile.0.05(R)`,
+                            rtupci = mean_Rt$R$`Quantile.0.95(R)`)
+    
+    
+    
+    #merges the Rt value with the other variant data and renames Rt to have variant suffix
+    merge = df %>%
+      arrange(days)%>% #keep in week so that the day variable lines up with the first week
+      mutate(day = 1:nrow(df)) %>% #used to merge with the estimate_R variable output for the day
+      left_join(rt_df) # %>%
+    #rename_with(.fn = ~paste0(name,"_",.), .cols = c("Rt", "rtlowci", "rtupci")) #renames the smooth_spline output to have variant prefix
+  }
+  
+  
+  #run estimate_R function on 
+  rt = list()
+  
+  for(i in seq_along(var_list)){
+    rt[[i]] = rt_fun(var_list[[i]])
+  }
+  
+  rt_comb = bind_rows(rt)
+  
+  rt_comb = rt_comb %>%
+    mutate_all(~gsub("_infections", "", .)) 
+  
+  rt_comb = rt_comb %>%
+    mutate(days = as.Date(days)) %>%
+    left_join(var_merge3_lowci, by = c("days","variant")) %>% 
+    left_join(var_merge3_upci, by = c("days","variant")) 
+  
+  rt_comb$variant <- factor(rt_comb$variant, 
+                            levels = c("Omicron (BA.5)",
+                                       "Omicron (BA.4)",
+                                       "Omicron (BA.2)",
+                                       "Omicron (BA.1)",
+                                       "Omicron (BA.3)",
+                                       "Delta",
+                                       "Other"))
+  write.csv(rt_comb, "outputs/SARS-CoV-2 effective reproduction number in Connecticut since November 2021.csv")
+
+######## IX. TOTAL SEQUENCES ########
+  old_total = read.csv("data/total_sequences.csv")
+  old_total = old_total %>%
+    select(-c(X))
+   # mutate(date = mdy(date))
+  
+  total_sequences = old_total$total[nrow(old_total)] + nrow(new_genomes[grep("Yale", new_genomes$Virus.name),]) # recalculate total
+  
+  today = as.character(today())
+  updated_total = c(today,total_sequences)
+  
+  new_total = old_total %>%
+    rbind(updated_total) %>%
+    mutate(date = as.Date(date)) 
+  new_total = new_total %>%
+    subset(!duplicated(subset(new_total, select=c(date)))) # delete duplicated rows by date (in case of multiple test runs)
+  
+  write.csv(new_total,"data/total_sequences.csv")
+  
+  new_total_fixed = new_total
+  colnames(new_total_fixed) = c("Date of website update","Total number of sequences")
+  write.csv(new_total_fixed,"outputs/Total number of sequences published to GISAID database by Grubaugh Lab")
+  
+######## X. PLOTTING ##############
   
   # 1. Daily lineage freq in last 3 months
   
   output$lin_freq <- renderPlotly({
-    
-    lineage_plot = ggplot(lineages_daily,aes(x=`Collection.date`,y=freq, group=`Lineage names`, color = `Lineage names`)) +
-      geom_line() +
-      labs(
-        title = "Daily lineage frequencies in Connecticut (last 3 months)",
-        y = "Lineage frequency (%)",
-        x = "Time (days)",
-        subtitle = "% for lattest week shown subject to change"
-      )+
-      theme_light() + 
-      scale_color_manual(values=lineage_col) +
-      theme(
-        plot.title = element_text(face = "bold", size = 22) 
-      ) 
-    ggplotly(lineage_plot)
+
+      if (input$button == "3-day rolling average") {
+        ggplotly(lineage_rollavg)
+      } else {
+        ggplotly(lineage_plot)
+      }
   
   })
   
   # 2. Weekly variant freq since 1-2021
   
   output$var_freq <- renderPlotly({
+
+      if (input$button_who == "Line chart display") {
+        who_plot = ggplot(who_weekly,aes(x=`week`,y=freq, group = `Variant names`, color = `Variant names`)) +
+          geom_line() +
+          labs(
+            title = "Weekly variant frequencies in Connecticut (since January 2021)",
+            y = "Variant frequency (%)",
+            x = "Time (weeks)"
+          ) + 
+          scale_color_manual(values = c(who_colors)) +
+          theme_light() +
+          theme(
+            plot.title = element_text(size = 15,hjust = 0.5)
+          )
+        ggplotly(who_plot)
+      } else {
+        
+        who_plot_bar = ggplot(who_weekly,aes(x=`week`,y=freq, group = `Variant names`, fill = `Variant names`)) +
+          geom_bar(position = "fill", stat="identity") +
+          labs(
+            title = "Weekly variant frequencies in Connecticut (since January 2021)",
+            y = "Variant frequency"
+          ) + 
+          scale_fill_manual(values = c(who_colors)) +
+          theme_light() +
+          theme(
+            plot.title = element_text(size = 15,hjust = 0.5)
+          )
+        ggplotly(who_plot_bar)
+      }
     
-    who_colors = c("Other" = "#c4c1c0",
-                   "Alpha" = "#1160f6",
+  })
+  
+  # 2.a. Rt values by variant\
+  output$rt <- renderPlot({
+    
+    who_colors_rt = c(
                    "Delta" = "#11adf6",
-                   "Beta" = "#c81ac8",
-                   "Gamma" = "#c81ac8",
-                   "Lambda" = "#aef516",
-                   "Epsilon" = "#13d84f",
-                   "Iota" = "#05d0ab",
-                   "Mu" = "#9e5220",
                    "Omicron (BA.1)" = "#f1fa30",
                    "Omicron (BA.2)" = "#fdb902",
-                   "Omicron (BA.3)" = "#e58b00",
                    "Omicron (BA.4)" = "#f47110", 
                    "Omicron (BA.5)" = "#d04805"
     )
-    who_plot = ggplot(who_weekly,aes(x=`week`,y=freq, group = `Variant names`, color = `Variant names`)) +
-      geom_line() +
-      labs(
-        title = "Weekly variant frequencies in Connecticut (since January 2021)",
-        y = "Variant frequency (%)",
-        x = "Time (weeks)"
-      ) + 
-      scale_color_manual(values = c(who_colors)) +
-      theme_light() +
-      theme(
-        plot.title = element_text(face = "bold", size = 22)
-      ) 
-    ggplotly(who_plot)
+
+    if (input$button_rt == "Effective reproduction number") {
+      
+      rt_plot = ggplot(rt_comb, aes(x = `days`, y = as.numeric(Rt), group = variant, color = variant)) +
+        geom_line() + 
+        geom_ribbon(aes(ymin = as.numeric(rtlowci), 
+                        ymax = as.numeric(rtupci), fill = variant), 
+                    alpha=0.1, 
+                    linetype="blank",
+                    color="grey") +
+        geom_hline(yintercept = 1) +
+        labs(
+          title = "Variant effective reproduction number (Rt) in Connecticut (since Nov 2021)",
+          y = "Rt value",
+          x = "Time (weeks)"
+        ) + 
+        scale_fill_manual(values = c(who_colors_rt)) +
+        scale_color_manual(values = c(who_colors_rt)) +
+        theme_light()+
+        theme(
+          plot.title = element_text(size = 24,hjust = 0.5),
+          axis.title.x = element_text(size = 17, hjust = 0.5),
+          axis.text.x = element_text(size = 14, hjust = 0.5),
+          axis.text.y = element_text(size = 14, hjust = 0.5),
+          legend.text = element_text(size = 14, hjust = 0.5),
+          legend.title = element_text(size = 18, hjust = 0.5),
+          axis.title.y = element_text(size = 17, hjust = 0.5)
+        )
+      rt_plot
+      
+    } else {
+      
+      I_plot = ggplot(rt_comb, aes(x = `days`, y = as.numeric(I), group = variant, color = variant)) +
+        geom_line() + 
+        labs(
+          title = "Variant estimated infections in Connecticut (since Nov 2021)",
+          y = "Estimated infections (cases)",
+          x = "Time (weeks)"
+        ) + 
+        geom_ribbon(aes(ymin = as.numeric(I_025), 
+                        ymax = as.numeric(I_975), fill = variant), 
+                    alpha=0.1, 
+                    linetype="blank",
+                    color="grey") +
+        scale_fill_manual(values = c(who_colors_rt)) +
+        scale_color_manual(values = c(who_colors_rt)) +
+        theme_light() +
+        theme(
+          plot.title = element_text(size = 22,hjust = 0.5)
+        )
+      I_plot
+    }
+    
     
   })
   
@@ -353,10 +865,10 @@ shinyServer(function(input,output){
     datatable(table1_new,
               filter = "top",
               caption = htmltools::tags$caption(
-                style = 'caption-side: bottom; text-align: center',
+                style = 'caption-side: top; text-align: center;font-size:20px',
 
-                'Table 1: ', htmltools::em('SARS-CoV-2 variants in Connecticut.')),
-              options = list(pageLength = 20, 
+                'Summary table: SARS-CoV-2 variants in Connecticut.'),
+              options = list(pageLength = recent_variants_count, 
                              dom = 'Bfrtip',
                              selection="multiple",
                              order = list(list(5,'desc'),list(4,'desc')),
@@ -387,45 +899,42 @@ shinyServer(function(input,output){
       scale_y_reverse(breaks = seq(10, 40, by = 5))+
       theme_light()+
       theme(
-        plot.title=element_text(size=30, face ="bold"),
+        plot.title=element_text(size=20),
         legend.position="none",axis.text = element_text(size = 10, color = "black",face ="bold"), 
                             axis.title=element_text(size=12, face ="bold"))
     Ct_graph
     
   })
   
-  output$Ct_caption <- renderInfoBox({
-    
-    Ct_caption_txt = "A Ct value is defined as the number of amplification cycles required at which point the diagnostic result of the real-time PCR changes from negative 
-                      (not detectable) to positive (detectable). 
-                      The Ct value reflects the amount of virus copies in a sample, with a lower Ct value indicating more virus. See diagram to the right."
-    infoBox(title = HTML("Note:"),
-            value = HTML("<p style='font-size:18px'>",
-                         Ct_caption_txt,"</p>"),
-            icon = icon("creative-commons-sa"),
-            fill = TRUE
-    )
-  })
+
   
   # 5. Subsampler
   
-  output$subsampler <- renderPlot({
-  
-    subsampler_plot
+  output$subsampler <- renderPlotly({
+    
+    
+      if (input$button_subsampler == "Proportion of cases sequenced") {
+        ggplotly(subsampler_plot)
+      } else {
+        ggplotly(subsampler_log)
+      }
+    
     
   })
   
   
-  # 6. Total sequences info box
+  # 6. Total sequences 
   
-  output$total_seq <- renderInfoBox({
+  output$total_seq <- renderValueBox({
     
+    total_sequences = new_total$total[nrow(new_total)] 
 
-    infoBox(title = HTML("Yale SARS-CoV-2 Genomic Surveillance Initiative: Genomes Published<br>"),
+    valueBox(
             value = HTML("<p style='font-size:40px', text-align: center>",
                          total_sequences,"</p>"),
+            subtitle = HTML("<p text-align: center>",
+                            "Yale SARS-CoV-2 Genomic Surveillance Initiative: <br>Genomes Published<br>"),
             color = "orange",
-            fill = TRUE,
             width = 4
     )
   })
@@ -447,12 +956,11 @@ shinyServer(function(input,output){
   
   output$nextstrain_caption <- renderInfoBox({
     
-    nextstrain_txt = "We created a custom Nextstrain page to visualize the relatedness of sequenced COVID-19 cases in the state. Below shows a phylogenetic tree of historic sequences in Connecticut, colored by pango lineage assignments."
+    nextstrain_txt = "We created a custom Nextstrain page to visualize the relatedness of sequenced SARS-CoV-2 cases in the state. Below shows a phylogenetic tree of historic sequences in Connecticut, colored by pango lineage assignments."
     
     infoBox(title = HTML("Phylogenetics:"),
-            value = HTML("<p style='font-size:18px'>",
+            value = HTML("<p style='font-size:18px; align: center'>",
                          nextstrain_txt,"</p>"),
-            color = "orange",
             icon = icon("creative-commons-sampling"),
             fill = TRUE,
             width = 4
@@ -512,4 +1020,51 @@ shinyServer(function(input,output){
     )
   })
   
+  # 10. Download buttons
+  output$downloadLineages <- downloadHandler(
+    filename = function() {
+      paste("SARS-CoV-2 lineage frequency in Connecticut since ",date_3_months,".csv",sep ='')
+    },
+    content = function(con) {
+      write.csv(lineages_daily_sorted,con)
+    }
+   )
+  
+  output$downloadVariants <- downloadHandler(
+    filename = function() {
+      paste("SARS-CoV-2 variant frequency in Connecticut.csv",sep ='')
+    },
+    content = function(con) {
+      write.csv(who_weekly,con)
+    }
+  )
+  
+  output$downloadTable <- downloadHandler(
+    filename = function() {
+      paste("Summary table of SARS-CoV-2 variant frequency.csv",sep ='')
+    },
+    content = function(con) {
+      write.csv(table1_new,con)
+    }
+  )
+  
+  output$downloadRt <- downloadHandler(
+    filename = function() {
+      paste("SARS-CoV-2 effective reproduction number in Connecticut since November 2021.csv",sep ='')
+    },
+    content = function(con) {
+      write.csv(rt_comb,con)
+    }
+  )
+  
+  output$downloadSubsampler <- downloadHandler(
+    filename = function() {
+      paste("SARS-CoV-2 case count and sequenced proportion in Connecticut.csv",sep ='')
+    },
+    content = function(con) {
+      write.csv(subsampler,con)
+    }
+  )
+
+
 })
