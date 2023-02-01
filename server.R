@@ -44,7 +44,7 @@ set.seed(1234)
 
 date_3_months = as.Date(lubridate::today() - 92) # CHANGE TO MOST RECENT 3 MONTHS
 date_3_weeks = as.Date(lubridate::today() - 22) # CHANGE TO MOST RECENT 3 WEEKS
-date_gisaid = as.Date("2022-10-12") # FOR FILTERING GISAID DOWNLOAD
+date_gisaid = as.Date("2023-02-01") # FOR FILTERING GISAID DOWNLOAD
 
 # I.1. MULTIPLOT FUNCTION ####
 multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
@@ -106,6 +106,7 @@ shinyServer(function(input,output){
   new_genomes$`Collection.date` <- as.Date(new_genomes$`Collection.date`)
   new_genomes = new_genomes %>%
     filter(Collection.date > "2021-01-01")
+  
   # concat new submissions to masterfile
   metadata_CT_all = rbind(metadata_CT_old,new_genomes)
   metadata_CT_all = metadata_CT_all %>%
@@ -119,6 +120,8 @@ shinyServer(function(input,output){
   metadata_CT_all$pango_lineage <- metadata_CT_all$Lineage
   metadata_CT_all["pango_lineage"][metadata_CT_all["pango_lineage"] == "BA.2.75 (marker override based on Emerging Variants AA substitutions)"] = "BA.2.75"
   metadata_CT_all["pango_lineage"][metadata_CT_all["pango_lineage"] == "BF.6 (marker override based on Emerging Variants AA substitutions)"] = "BF.6"
+  metadata_CT_all["pango_lineage"][metadata_CT_all["pango_lineage"] == "XBB (marker override based on Emerging Variants AA substitutions)"] = "XBB"
+  metadata_CT_all["pango_lineage"][metadata_CT_all["pango_lineage"] == "BA.2" & metadata_CT_all["Collection.date"] > "2022-12-16"] = "XBB.1.5"
   
   # create week date column
   metadata_CT_all <- metadata_CT_all %>% mutate(CopyDate = `Collection.date`)
@@ -132,6 +135,8 @@ shinyServer(function(input,output){
   # II.1. Create WHO variant name file ######
   names = read.csv("data/variant_names.csv")
   metadata_CT_who = merge(metadata_CT_all,names[,c("pango_lineage","who_variants")], by = "pango_lineage", all.x = TRUE)
+  metadata_CT_who = metadata_CT_who %>%
+    mutate(who_variants = replace(who_variants,is.na(metadata_CT_who$who_variants) & week >= "2022-05-05", "Other Omicrons")) # replace NAs to other Omicrons, may change if new variant appears
   
   # create cumulative & most recent 3 week variant files for Table 1
   cumulative <- metadata_CT_who %>% 
@@ -170,7 +175,7 @@ shinyServer(function(input,output){
   
   # find cumulative lineage scores & filter out minor lineages & assign colors
   lineages_sum <- metadata_CT_recent %>% group_by(`pango_lineage`) %>% count(pango_lineage) 
-  lineages_sum = lineages_sum%>%
+  lineages_sum = lineages_sum %>%
     mutate(ShortLin = pango_lineage) 
   lineages_sum = lineages_sum %>%
     mutate(ShortLin = case_when(
@@ -195,7 +200,9 @@ shinyServer(function(input,output){
       startsWith(ShortLin, "BE") ~ "BA.5",
       startsWith(ShortLin, "BT") ~ "BA.5",
       startsWith(ShortLin, "BF") ~ "BA.5",
-      startsWith(ShortLin, "BQ") ~ "BA.5",
+      startsWith(ShortLin, "BQ.1") ~ "BQ.1",
+      startsWith(ShortLin, "BQ.2") ~ "BA.5",
+      startsWith(ShortLin, "BQ.3") ~ "BA.5",
       startsWith(ShortLin, "CN") ~ "BA.5",
       startsWith(ShortLin, "CD") ~ "BA.5",
       startsWith(ShortLin, "CE") ~ "BA.5",
@@ -204,13 +211,14 @@ shinyServer(function(input,output){
       startsWith(ShortLin, "CG") ~ "BA.5",
       startsWith(ShortLin, "CK") ~ "BA.5",
       startsWith(ShortLin, "BZ") ~ "BA.5",
+      startsWith(ShortLin, "XBB") ~ "XBB",
       TRUE ~ "Other"
     ))
   
   
   lineages_sum = lineages_sum %>%
     mutate(color =  case_when(
-      ShortLin == "BA.1" ~ "#7e1cb9",
+      ShortLin == "BA.1" ~ "#2b931a",
       (ShortLin == "BA.2" & n >= quantile(lineages_sum$n)[5]) ~ "#c5f367", 
       (ShortLin == "BA.2" & n < quantile(lineages_sum$n)[5] & n > quantile(lineages_sum$n)[3]) ~ "#faf994", 
       (ShortLin == "BA.2" & n < quantile(lineages_sum$n)[3] ) ~ "#f8ffda", 
@@ -218,15 +226,17 @@ shinyServer(function(input,output){
       ShortLin == "BA.2.75" ~ "#3eb480",
       ShortLin == "BA.4" ~ "#225fd6", 
       ShortLin == "BA.4.6" ~ "#76e4f5", 
-      (ShortLin == "BA.5" & n >= quantile(lineages_sum$n)[5]) ~ "#ff6666", 
+      (ShortLin == "BA.5" & n >= quantile(lineages_sum$n)[5]) ~ "#f3152f", 
       (ShortLin == "BA.5" & n < quantile(lineages_sum$n)[5] & n > quantile(lineages_sum$n)[4]) ~ "#fcaa99",
       (ShortLin == "BA.2" & n < quantile(lineages_sum$n)[4] & n > quantile(lineages_sum$n)[3]) ~ "#faf994", 
       (ShortLin == "BA.5" & n < quantile(lineages_sum$n)[3] ) ~ "#ffe4ee", 
+      (ShortLin == "BQ.1" ~ "#b566ff"),
+      (ShortLin == "XBB" ~ "#333333"),
       TRUE ~ "#fef9f3"
     )
     )
   row.names(lineages_sum) = lineages_sum$pango_lineage
-  
+
   
   # reclassify lineages, placing minor lineages as Other
   lineages_daily_draft$`pango_lineage` = ifelse(lineages_daily_draft$`pango_lineage`%in% rownames(lineages_sum),lineages_daily_draft$`pango_lineage`,"Other")
@@ -278,7 +288,9 @@ shinyServer(function(input,output){
       startsWith(ShortLin, "BE") ~ "BA.5",
       startsWith(ShortLin, "BT") ~ "BA.5",
       startsWith(ShortLin, "BF") ~ "BA.5",
-      startsWith(ShortLin, "BQ") ~ "BA.5",
+      startsWith(ShortLin, "BQ.1") ~ "BQ.1",
+      startsWith(ShortLin, "BQ.2") ~ "BA.5",
+      startsWith(ShortLin, "BQ.3") ~ "BA.5",
       startsWith(ShortLin, "CN") ~ "BA.5",
       startsWith(ShortLin, "CD") ~ "BA.5",
       startsWith(ShortLin, "CE") ~ "BA.5",
@@ -287,6 +299,7 @@ shinyServer(function(input,output){
       startsWith(ShortLin, "CG") ~ "BA.5",
       startsWith(ShortLin, "CK") ~ "BA.5",
       startsWith(ShortLin, "BZ") ~ "BA.5",
+      startsWith(ShortLin, "XBB") ~ "XBB",
       TRUE ~ "Other"
     ))
   #names(lineage_col) <- lineages_names
@@ -336,10 +349,12 @@ shinyServer(function(input,output){
   who_weekly = who_weekly[-c(which(who_weekly$week == max(who_weekly$week))),] 
   who_weekly$`Variant names` <- factor(who_weekly$who_variants, 
                                        levels = c("Omicron (BA.5)",
+                                                  "Omicron (BQ.1)",
                                                   "Omicron (BA.4)",
                                                   "Omicron (BA.2)",
                                                   "Omicron (BA.1)",
                                                   "Omicron (BA.3)",
+                                                  "Omicron (XBB)",
                                                   "Delta",
                                                   "Alpha",
                                                   "Iota",
@@ -359,11 +374,13 @@ shinyServer(function(input,output){
                  "Epsilon" = "#13d84f",
                  "Iota" = "#05d0ab",
                  "Mu" = "#9e5220",
-                 "Omicron (BA.1)" = "#f1fa30",
+                 "Omicron (BA.1)" = "#2b931a",
                  "Omicron (BA.2)" = "#fdb902",
                  "Omicron (BA.3)" = "#e58b00",
-                 "Omicron (BA.4)" = "#f47110", 
-                 "Omicron (BA.5)" = "#d04805"
+                 "Omicron (BA.4)" = "#f47110",
+                 "Omicron (BQ.1)" = "#b566ff",
+                 "Omicron (BA.5)" = "#a90505",
+                 "Omicron (XBB)" = "#333333"
   )
 
   
@@ -475,38 +492,53 @@ shinyServer(function(input,output){
     title = "case count"
   )
   
-  subsampler_plot = plot_ly(subsampler) %>%
-    add_bars(x = ~week, y = ~case_count, colors = "blue", 
-             name = "weekly cases",data = subsampler, showlegend=TRUE, inherit=FALSE) %>%
-    add_lines(x = ~week, y = ~percent, colors ="red", yaxis = "y2", 
-              name = "%seq",data = subsampler, showlegend=TRUE, inherit=FALSE) %>%
-    layout(title = "Proportion of SARS-CoV-2 cases sequenced in Connecticut",
-           yaxis = ay1,
-           yaxis2 = ay2)
-  
-  
-  subsampler_log = plot_ly(subsampler) %>%
-    add_trace(x = ~week, y = ~log_cases, colors = "blue", 
-              name = "log cumulative cases",data = subsampler, showlegend=TRUE, inherit=FALSE, mode = 'lines+markers') %>%
-    add_trace(x = ~week, y = ~log_seq, colors ="red", 
-              name = "log cumulative sequences",data = subsampler, showlegend=TRUE, inherit=FALSE, mode = 'lines+markers') %>%
-    layout(title = "Log cumulative SARS-CoV-2 cases and sequences in Connecticut",
-           yaxis = ay1)
-  
-
-  
   
 # VII. Ct Values by Lineages #############
   
   glab = read.csv("data/GLab_SC2_sequencing_data - Sample metadata.csv")
   gc()
-  ######Assign BA.1 vs BA.2 ######
+
   glab_filt <- glab %>% mutate(Ctvals = Lineage) 
-  glab_filt$Ctvals <- substr(glab_filt$Ctvals, 1,4)
-  
   
   #include only samples with lineage assignments
-  Ct_values <- glab_filt %>% dplyr::filter(`Ctvals` %in% c("BA.1", "BA.2","BA.4","BA.5"))
+  glab_filt = glab_filt %>%
+    mutate(Ctvals = case_when(
+      endsWith(Ctvals, "2.12.1") ~ "BA.2.12.1",
+      startsWith(Ctvals, "BG") ~ "BA.2.12.1",
+      startsWith(Ctvals, "BA.2.75") ~ "BA.2.75",
+      startsWith(Ctvals, "BA.1") ~ "BA.1",
+      startsWith(Ctvals, "BA.2") ~ "BA.2",
+      startsWith(Ctvals, "BK") ~ "BA.2",
+      startsWith(Ctvals, "BP") ~ "BA.2",
+      startsWith(Ctvals, "BL") ~ "BA.2.75",
+      startsWith(Ctvals, "BH") ~ "BA.2",
+      startsWith(Ctvals, "BM") ~ "BA.2",
+      startsWith(Ctvals, "CH") ~ "BA.2",
+      startsWith(Ctvals, "BJ") ~ "BA.2",
+      startsWith(Ctvals, "BR") ~ "BA.2",
+      startsWith(Ctvals, "BA.4") ~ "BA.4",
+      startsWith(Ctvals, "BA.4.6") ~ "BA.4.6",
+      startsWith(Ctvals, "BA.5") ~ "BA.5",
+      startsWith(Ctvals, "BU") ~ "BA.5",
+      startsWith(Ctvals, "BV") ~ "BA.5",
+      startsWith(Ctvals, "BE") ~ "BA.5",
+      startsWith(Ctvals, "BT") ~ "BA.5",
+      startsWith(Ctvals, "BF") ~ "BA.5",
+      startsWith(Ctvals, "BQ.1") ~ "BQ.1",
+      startsWith(Ctvals, "BQ.2") ~ "BA.5",
+      startsWith(Ctvals, "BQ.3") ~ "BA.5",
+      startsWith(Ctvals, "CN") ~ "BA.5",
+      startsWith(Ctvals, "CD") ~ "BA.5",
+      startsWith(Ctvals, "CE") ~ "BA.5",
+      startsWith(Ctvals, "CF") ~ "BA.5",
+      startsWith(Ctvals, "CL") ~ "BA.5",
+      startsWith(Ctvals, "CG") ~ "BA.5",
+      startsWith(Ctvals, "CK") ~ "BA.5",
+      startsWith(Ctvals, "BZ") ~ "BA.5",
+      startsWith(Ctvals, "XBB") ~ "XBB",
+      TRUE ~ "Other"
+    ))
+  Ct_values <- glab_filt %>% dplyr::filter(`Ctvals` %in% c("BA.2","BQ.1","BA.5","XBB"))
   rm(glab,glab_filt)
   gc()
   
@@ -514,7 +546,7 @@ shinyServer(function(input,output){
 # VIII. Rt Values by Variant #############
   
   # Making API request using the GET() function and specifying the API’s URL:
-  url = paste("api2.covidestim.org/runs?geo_name=eq.Connecticut&run_date=gt.",lubridate::today() - 14,"&select=*%2Ctimeseries(*)",sep = "")
+  url = paste("api2.covidestim.org/runs?geo_name=eq.Connecticut&run_date=gt.",lubridate::today() - 21,"&select=*%2Ctimeseries(*)",sep = "")
   res = GET(url)
   
   # convert the raw Unicode into a character vector that resembles the JSON format to obtain case data
@@ -538,8 +570,9 @@ shinyServer(function(input,output){
   # variant frequency data (who_weekly obtained in shinyapp pipeline)
   who_weekly_rt = who_weekly %>%
     select(-c(`Variant names`)) %>%
-    mutate(week = week +3)  # create week to match
-  
+    mutate(week = week +3) %>% # create week to match 
+    filter(!(who_variants == "Omicron (BA.2)" & week >= "2022-08-15")) # remove one-off BA.2 infections
+    
   who_weekly_rt = data.frame(who_weekly_rt)
   var_data = reshape(who_weekly_rt, idvar = "week", timevar = "who_variants", direction = "wide")
   var_data[is.na(var_data)] <- 0
@@ -567,7 +600,7 @@ shinyServer(function(input,output){
     mutate_if(is.numeric, 
               .funs = ~zoo::rollmean(., k = 7, fill = 0)) %>% #divide by 7 to get avg daily, roll mean to smooth
     mutate_at(vars(starts_with("freq")), 
-              .funs = ~ifelse(. <= 0.05, 0, .)) %>% #remove 1 off sequences of variants to prevent wide Rt may need to be edited in the future to include
+              .funs = ~ifelse(. <= 0.02, 0, .)) %>% #remove 1 off sequences of variants to prevent wide Rt may need to be edited in the future to include
     mutate(across(starts_with("freq"), 
                   .fns = list("infections" = ~.*infections))) %>% #calculate variant specific number of infections
     mutate_at(vars(ends_with("infections")), 
@@ -583,7 +616,7 @@ shinyServer(function(input,output){
     mutate_if(is.numeric, 
               .funs = ~zoo::rollmean(., k = 7, fill = 0)) %>% #divide by 7 to get avg daily, roll mean to smooth
     mutate_at(vars(starts_with("freq")), 
-              .funs = ~ifelse(. <= 0.05, 0, .)) %>% #remove 1 off sequences of variants to prevent wide Rt may need to be edited in the future to include
+              .funs = ~ifelse(. <= 0.02, 0, .)) %>% #remove 1 off sequences of variants to prevent wide Rt may need to be edited in the future to include
     mutate(across(starts_with("freq"), 
                   .fns = list("025" = ~.*infections_p2_5))) %>% #calculate variant specific number of infections (95lci)
     mutate_at(vars(ends_with("infections")), 
@@ -599,7 +632,7 @@ shinyServer(function(input,output){
     mutate_if(is.numeric, 
               .funs = ~zoo::rollmean(., k = 7, fill = 0)) %>% #divide by 7 to get avg daily, roll mean to smooth
     mutate_at(vars(starts_with("freq")), 
-              .funs = ~ifelse(. <= 0.05, 0, .)) %>% #remove 1 off sequences of variants to prevent wide Rt may need to be edited in the future to include
+              .funs = ~ifelse(. <= 0.02, 0, .)) %>% #remove 1 off sequences of variants to prevent wide Rt may need to be edited in the future to include
     mutate(across(starts_with("freq"), 
                   .fns = list("975" = ~.*infections_p97_5))) %>% #calculate variant specific number of infections (95uci)
     mutate_at(vars(ends_with("infections")), 
@@ -630,12 +663,14 @@ shinyServer(function(input,output){
   
   colnames(var_merge3_lowci)[which(colnames(var_merge3_lowci)  == "I" )] <- 'I_025'
   colnames(var_merge3_upci)[which(colnames(var_merge3_upci)  == "I" )] <- 'I_975'
+
   
   #creates list of dataframes by variant for calculating estimate_R
   var_list = var_merge3_main %>%
     group_by(variant) %>%
     arrange(variant) %>%
     group_split()
+  
   
   var_name = unique(var_merge3_main$variant)
   
@@ -659,8 +694,8 @@ shinyServer(function(input,output){
     
     
     #input of interval for R estimate
-    t_start<-seq(2, nrow(df2)-21) 
-    t_end<- t_start + 21
+    t_start<-seq(2, nrow(df2)-15) 
+    t_end<- t_start + 15
     
     config <- make_config(list(mean_si = 3.5, std_mean_si = 1, min_mean_si = 1, max_mean_si = 6, # estimates for SARS-CoV-2 serial interval
                                std_si = 1, std_std_si = 0.5, min_std_si = 0.5, max_std_si = 1.5,
@@ -711,6 +746,8 @@ shinyServer(function(input,output){
   
   rt_comb$variant <- factor(rt_comb$variant, 
                             levels = c("Omicron (BA.5)",
+                                       "Omicron (BQ.1)",
+                                       "Omicron (XBB)",
                                        "Omicron (BA.4)",
                                        "Omicron (BA.2)",
                                        "Omicron (BA.1)",
@@ -769,6 +806,7 @@ shinyServer(function(input,output){
             x = "Time (weeks)"
           ) + 
           scale_color_manual(values = c(who_colors)) +
+          scale_x_date(date_breaks="3 month", date_labels="%m-%Y") +
           theme_light() +
           theme(
             plot.title = element_text(size = 15,hjust = 0.5)
@@ -783,6 +821,7 @@ shinyServer(function(input,output){
             y = "Variant frequency"
           ) + 
           scale_fill_manual(values = c(who_colors)) +
+          scale_x_date(date_breaks="3 month", date_labels="%m-%Y") +
           theme_light() +
           theme(
             plot.title = element_text(size = 15,hjust = 0.5)
@@ -797,10 +836,12 @@ shinyServer(function(input,output){
     
     who_colors_rt = c(
                    "Delta" = "#11adf6",
-                   "Omicron (BA.1)" = "#f1fa30",
+                   "Omicron (BA.1)" = "#2b931a",
                    "Omicron (BA.2)" = "#fdb902",
                    "Omicron (BA.4)" = "#f47110", 
-                   "Omicron (BA.5)" = "#d04805"
+                   "Omicron (BQ.1)" = "#b566ff", 
+                   "Omicron (XBB)" = "#333333", 
+                   "Omicron (BA.5)" = "#a90505"
     )
 
     if (input$button_rt == "Effective reproduction number") {
@@ -820,6 +861,7 @@ shinyServer(function(input,output){
         ) + 
         scale_fill_manual(values = c(who_colors_rt)) +
         scale_color_manual(values = c(who_colors_rt)) +
+        scale_x_date(date_breaks="3 month", date_labels="%m-%Y") +
         theme_light()+
         theme(
           plot.title = element_text(size = 24,hjust = 0.5),
@@ -833,8 +875,9 @@ shinyServer(function(input,output){
       rt_plot
       
     } else {
-      
-      I_plot = ggplot(rt_comb, aes(x = `days`, y = as.numeric(I), group = variant, color = variant)) +
+      rt_comb_filt = rt_comb %>%
+        filter(days < max(days)-2)
+      I_plot = ggplot(rt_comb_filt, aes(x = `days`, y = as.numeric(I), group = variant, color = variant)) +
         geom_line() + 
         labs(
           title = "Variant estimated infections in Connecticut (since Nov 2021)",
@@ -848,6 +891,7 @@ shinyServer(function(input,output){
                     color="grey") +
         scale_fill_manual(values = c(who_colors_rt)) +
         scale_color_manual(values = c(who_colors_rt)) +
+        scale_x_date(date_breaks="3 month", date_labels="%m-%Y") +
         theme_light() +
         theme(
           plot.title = element_text(size = 22,hjust = 0.5)
@@ -884,7 +928,7 @@ shinyServer(function(input,output){
   
   output$CT <- renderPlot({
 
-    intercept_char <- Ct_values %>% dplyr::filter(`Ctvals` == c("BA.1"))
+    intercept_char <- Ct_values %>% dplyr::filter(`Ctvals` == c("BA.2"))
     intercept <- as.numeric(intercept_char$`Yale.N1.FAM.`)
     intercept <- mean(intercept,na.rm = TRUE)
     rm(intercept_char)
@@ -910,16 +954,62 @@ shinyServer(function(input,output){
   
   # 5. Subsampler
   
+  subsampler_short = subsampler %>% # last 10 months for better viewing of recent trends
+    filter(week > (as.Date(lubridate::today() - 92) - 300))
+
+  subsampler_plot = plot_ly(subsampler) %>%
+    add_bars(x = ~week, y = ~case_count, colors = "blue", 
+             name = "weekly cases",data = subsampler, showlegend=TRUE, inherit=FALSE) %>%
+    add_lines(x = ~week, y = ~percent, colors ="red", yaxis = "y2", 
+              name = "%seq",data = subsampler, showlegend=TRUE, inherit=FALSE) %>%
+    layout(title = "Proportion of SARS-CoV-2 cases sequenced in Connecticut",
+           yaxis = ay1,
+           yaxis2 = ay2)
+  
+  subsampler_log = plot_ly(subsampler) %>%
+    add_trace(x = ~week, y = ~log_cases, colors = "blue", 
+              name = "log cumulative cases",data = subsampler, showlegend=TRUE, inherit=FALSE, mode = 'lines+markers') %>%
+    add_trace(x = ~week, y = ~log_seq, colors ="red", 
+              name = "log cumulative sequences",data = subsampler, showlegend=TRUE, inherit=FALSE, mode = 'lines+markers') %>%
+    layout(title = "Log cumulative SARS-CoV-2 cases and sequences in Connecticut",
+           yaxis = ay1)
+  
+  subsampler_plot_short = plot_ly(subsampler_short) %>%
+    add_bars(x = ~week, y = ~case_count, colors = "blue", 
+             name = "weekly cases",data = subsampler_short, showlegend=TRUE, inherit=FALSE) %>%
+    add_lines(x = ~week, y = ~percent, colors ="red", yaxis = "y2", 
+              name = "%seq",data = subsampler_short, showlegend=TRUE, inherit=FALSE) %>%
+    layout(title = "Proportion of SARS-CoV-2 cases sequenced in Connecticut",
+           yaxis = ay1,
+           yaxis2 = ay2)
+  
+  subsampler_log_short = plot_ly(subsampler_short) %>%
+    add_trace(x = ~week, y = ~log_cases, colors = "blue", 
+              name = "log cumulative cases",data = subsampler_short, showlegend=TRUE, inherit=FALSE, mode = 'lines+markers') %>%
+    add_trace(x = ~week, y = ~log_seq, colors ="red", 
+              name = "log cumulative sequences",data = subsampler_short, showlegend=TRUE, inherit=FALSE, mode = 'lines+markers') %>%
+    layout(title = "Log cumulative SARS-CoV-2 cases and sequences in Connecticut",
+           yaxis = ay1)
+  
   output$subsampler <- renderPlotly({
     
-    
-      if (input$button_subsampler == "Proportion of cases sequenced") {
-        ggplotly(subsampler_plot)
+    if (input$button_shorten == TRUE & 
+        input$button_subsampler == "Proportion of cases sequenced") {
+          ggplotly(subsampler_plot)
       } else {
-        ggplotly(subsampler_log)
+        if (input$button_shorten == FALSE & 
+            input$button_subsampler == "Proportion of cases sequenced") {
+        ggplotly(subsampler_plot_short)
+      } else {
+        if (input$button_shorten == TRUE & 
+            input$button_subsampler == "Log cumulative cases-sequences") {
+          ggplotly(subsampler_log)
+      } else {
+        ggplotly(subsampler_log_short)
       }
-    
-    
+      }
+      }
+  
   })
   
   
