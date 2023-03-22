@@ -14,7 +14,7 @@ library(plotly)
 library(lubridate)
 # library(leaflet)
 
-date_gisaid = as.Date("2022-10-12") # FOR FILTERING GISAID DOWNLOAD
+date_gisaid = as.Date("2023-02-01") # FOR FILTERING GISAID DOWNLOAD
 
 title = paste("Connecticut SARS-CoV-2 variant surveillance – Report", today()) ## CHANGE TO CURRENT DATE OF REPORTING
 subtitle = paste("*Last date of sequencing data upload: ",date_gisaid)
@@ -92,9 +92,13 @@ shinyUI(navbarPage(title = "Yale SARS-CoV-2 Genomic Surveillance Initiative", th
                                             When Rt is above one, expect cases to rise in the coming weeks. When Rt is below one, expect cases to be on the decline.
                                             ","</p>"
                               ),
+                              
                               HTML("<p style='font-size: 16px; text-align: left'>",
                                    "** Estimation of Rt for SARS-CoV-2 is highly uncertain and subject to continuing changes. With the assistance of the <a href = 'https://www.covidestim.org'>Covidestim team </a>, we attempt to model
                                    Rt values for different SARS-CoV-2 variants based on estimated weekly infection count.","</p>"
+                            ),
+                            HTML("<p style='font-size: 16px; text-align: left'>",
+                                 "*** BQ.1 and its derivatives are sublineages of BA.5, separated from the visuals for close surveillance purposes.","</p>"
                             ),
                               
                               DT::dataTableOutput("table1"),
@@ -103,6 +107,9 @@ shinyUI(navbarPage(title = "Yale SARS-CoV-2 Genomic Surveillance Initiative", th
                                    "*Cumulative sequenced cases = the total cases for each variant that are confirmed by sequencing and reported by the Connecticut Department of Public Health. ","</p>"), 
                               HTML("<p style='font-size: 16px; text-align: left'>",
                                    "**Percent sequenced from past 3 weeks = samples collected within three weeks of the report date and sequenced by a collaborating lab for unbiased SARS-CoV-2 surveillance. ","</p>"), 
+                            HTML("<p style='font-size: 16px; text-align: left'>",
+                                 "*** BQ.1 and its derivatives are sublineages of BA.5, separated from the visuals for close surveillance purposes.","</p>"
+                            ),
                               HTML("<p style='font-size: 16px; text-align: left'>",
                                    "Variant of concern (VOC) = A variant for which there is evidence of an increase in transmissibility, more severe disease (increased hospitalizations or deaths), significant reduction in neutralization by antibodies generated during previous infection or vaccination, reduced effectiveness of treatments or vaccines, or diagnostic detection failures.","</p>"), 
                               HTML("<p style='font-size: 16px; text-align: left'>",
@@ -145,6 +152,7 @@ shinyUI(navbarPage(title = "Yale SARS-CoV-2 Genomic Surveillance Initiative", th
                                        selectInput("button_subsampler",label = "Choose graph",choices = c("Proportion of cases sequenced",
                                                                                                "Log cumulative cases-sequences"),
                                                    selected = "Proportion of cases sequenced"),
+                                       checkboxInput("button_shorten", label = "Full data", value = FALSE),
                                        HTML("<p style='font-size: 16px; text-align: left'>",
                                             "This graph displays the <b>proportion of SARS-CoV-2 cases sequenced in Connecticut per epidemiological week.</b>
                                         <br>Click on graph for interactive viewing of specific date range.
