@@ -683,6 +683,7 @@ shinyServer(function(input,output){
   #Rt Calculation
   #generates Rt calculation, smooths the line then merges with 
   #the other variant data in a dataframe
+  #link to paper (Cori et al, 2013) : https://academic.oup.com/aje/article/178/9/1505/89262
   
   #run for everything -Other
   rt_fun= function(df){
@@ -693,14 +694,18 @@ shinyServer(function(input,output){
     
     
     #input of interval for R estimate
+    #estimate burn in period for R estimate: t_end - t_start
     t_start<-seq(2, nrow(df2)-15) 
     t_end<- t_start + 15
     
+    # configuration of input data for R estimate
+    # essentially we are estimating the serial intervals of SARS-CoV-2 (Omicron variant specific) by drawing from two ( truncated normal ) distributions for the mean and standard deviation of the serial interval
     config <- make_config(list(mean_si = 3.5, std_mean_si = 1, min_mean_si = 1, max_mean_si = 6, # estimates for SARS-CoV-2 serial interval
                                std_si = 1, std_std_si = 0.5, min_std_si = 0.5, max_std_si = 1.5,
                                n1= 80, n2=20, t_start=t_start, t_end=t_end)
     )
     
+    # main R estimate function:
     mean_Rt = estimate_R(df2$I, #will search for column named I which was created in the ci_fun but explicitly named here
                          method="uncertain_si",
                          config = config)
@@ -755,6 +760,8 @@ shinyServer(function(input,output){
   write.csv(rt_comb, "outputs/SARS-CoV-2 effective reproduction number in Connecticut since November 2021.csv")
 
 ######## IX. TOTAL SEQUENCES ########
+  # estimate total sequences by Grubaugh Lab, may differ from submitted sequences on GISAID database
+  
   old_total = read.csv("data/total_sequences.csv")
   old_total = old_total %>%
     select(-c(X))
@@ -775,7 +782,7 @@ shinyServer(function(input,output){
   
   new_total_fixed = new_total
   colnames(new_total_fixed) = c("Date of website update","Total number of sequences")
-  write.csv(new_total_fixed,"outputs/Total number of sequences published to GISAID database by Grubaugh Lab")
+  write.csv(new_total_fixed,"outputs/Total number of SARS-CoV-2 sequences by Grubaugh Lab")
   
 ######## X. PLOTTING ##############
   
@@ -802,7 +809,7 @@ shinyServer(function(input,output){
             axis.text.x = element_text(hjust = 1, size = 10, color = "black")
           ) 
         
-        ggplotly(lineage_rollavg)
+        ggplotly(lineage_plot)
       } else {
         
         # moving avg plot
@@ -821,7 +828,7 @@ shinyServer(function(input,output){
             axis.text.x = element_text(hjust = 1, size = 10, color = "black")
           ) 
         
-        ggplotly(lineage_plot)
+        ggplotly(lineage_rollavg)
       }
   
   })
