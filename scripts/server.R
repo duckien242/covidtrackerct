@@ -188,7 +188,7 @@ shinyServer(function(input,output){
   
   # have all lineages be displayed every day, ensuring no breaks when plotting
   lineages_daily_draft <- metadata_CT_recent %>% complete(`Collection.date`, nesting(`pango_lineage`), fill = list(CopyDate = 0))
-  lineages_daily_draft$`Collection.date` = ifelse(lineages_daily_draft$`Collection.date` == 0,0,1) # for counting lineages
+  lineages_daily_draft$`CopyDate` = ifelse(lineages_daily_draft$`Collection.date` == 0,0,1) # for counting lineages
   
   # find cumulative lineage scores & filter out minor lineages & assign colors
   lineages_sum <- metadata_CT_recent %>% group_by(`pango_lineage`) %>% count(pango_lineage) 
@@ -266,7 +266,8 @@ shinyServer(function(input,output){
   # insert 3-day rolling average
   lineages_daily = lineages_daily %>%
     group_by(`Lineage names`) %>%
-    mutate(movavg = round(rollmean(freq, 3, na.pad = T),2)) 
+    mutate(freq = as.numeric(freq)) %>%
+    mutate(movavg = round(rollmean(freq, 3, na.pad = TRUE),2)) 
   
   # sort by cumulative counts
   lineages_daily_sorted = lineages_daily[order(-lineages_daily$freq),]
@@ -788,51 +789,47 @@ shinyServer(function(input,output){
   
   # 1. Daily lineage freq in last 3 months
   
-
   output$lin_freq <- renderPlotly({
-
-      if (input$button == "3-day rolling average") {
-        
-        # moving avg plot
-        lineage_rollavg = ggplot(lineages_daily_sorted,aes(x=`Collection.date`,y=`movavg`, group=`Lineage names`, color = `Lineage names`)) +
-          geom_line() +
-          labs(
-            title = "Lineage frequencies in Connecticut (last 3 months): 3-day rolling average",
-            y = "Lineage frequency (%)",
-            x = "Time (days)",
-            subtitle = "% for lattest week shown subject to change"
-          )+
-          theme_light() + 
-          scale_color_manual(values=lineages_sum$color) +
-          theme(
-            plot.title = element_text(size = 15) ,
-            axis.text.x = element_text(hjust = 1, size = 10, color = "black")
-          ) 
-        
-        ggplotly(lineage_rollavg)
-        
-      } else {
-        
-        # daily count plot
-        lineage_plot = ggplot(lineages_daily_sorted,aes(x=`Collection.date`,y=freq, group=`Lineage names`, color = `Lineage names`)) +
-          geom_line() +
-          labs(
-            title = "Daily lineage frequencies in Connecticut (last 3 months)",
-            y = "Lineage frequency (%)",
-            x = "Time (days)",
-            subtitle = "% for lattest week shown subject to change"
-          )+
-          theme_light() + 
-          scale_color_manual(values=lineages_sum$color) +
-          theme(
-            plot.title = element_text(size = 15) ,
-            axis.text.x = element_text(hjust = 1, size = 10, color = "black")
-          ) 
-        
-        ggplotly(lineage_plot)
-        
-      }
-  
+    
+    if (input$button == "3-day rolling average") {
+      lineage_rollavg = ggplot(lineages_daily_sorted,aes(x=`Collection.date`,y=`movavg`, group=`Lineage names`, color = `Lineage names`)) +
+        geom_line() +
+        labs(
+          title = "Lineage frequencies in Connecticut (last 3 months): 3-day rolling average",
+          y = "Lineage frequency (%)",
+          x = "Time (days)",
+          subtitle = "% for lattest week shown subject to change"
+        )+
+        theme_light() + 
+        scale_color_manual(values=lineages_sum$color) +
+        theme(
+          plot.title = element_text(size = 15) ,
+          axis.text.x = element_text(hjust = 1, size = 10, color = "black")
+        ) 
+      
+      ggplotly(lineage_rollavg)
+      
+    } else {
+      
+      # daily count plot
+      lineage_plot = ggplot(lineages_daily_sorted,aes(x=`Collection.date`,y=freq, group=`Lineage names`, color = `Lineage names`)) +
+        geom_line() +
+        labs(
+          title = "Daily lineage frequencies in Connecticut (last 3 months)",
+          y = "Lineage frequency (%)",
+          x = "Time (days)",
+          subtitle = "% for lattest week shown subject to change"
+        )+
+        theme_light() + 
+        scale_color_manual(values=lineages_sum$color) +
+        theme(
+          plot.title = element_text(size = 15) ,
+          axis.text.x = element_text(hjust = 1, size = 10, color = "black")
+        ) 
+      
+      ggplotly(lineage_plot)
+    }
+    
   })
   
   # 2. Weekly variant freq since 1-2021
