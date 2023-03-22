@@ -793,25 +793,6 @@ shinyServer(function(input,output){
 
       if (input$button == "3-day rolling average") {
         
-        # daily count plot
-        lineage_plot = ggplot(lineages_daily_sorted,aes(x=`Collection.date`,y=freq, group=`Lineage names`, color = `Lineage names`)) +
-          geom_line() +
-          labs(
-            title = "Daily lineage frequencies in Connecticut (last 3 months)",
-            y = "Lineage frequency (%)",
-            x = "Time (days)",
-            subtitle = "% for lattest week shown subject to change"
-          )+
-          theme_light() + 
-          scale_color_manual(values=lineages_sum$color) +
-          theme(
-            plot.title = element_text(size = 15) ,
-            axis.text.x = element_text(hjust = 1, size = 10, color = "black")
-          ) 
-        
-        ggplotly(lineage_plot)
-      } else {
-        
         # moving avg plot
         lineage_rollavg = ggplot(lineages_daily_sorted,aes(x=`Collection.date`,y=`movavg`, group=`Lineage names`, color = `Lineage names`)) +
           geom_line() +
@@ -829,6 +810,27 @@ shinyServer(function(input,output){
           ) 
         
         ggplotly(lineage_rollavg)
+        
+      } else {
+        
+        # daily count plot
+        lineage_plot = ggplot(lineages_daily_sorted,aes(x=`Collection.date`,y=freq, group=`Lineage names`, color = `Lineage names`)) +
+          geom_line() +
+          labs(
+            title = "Daily lineage frequencies in Connecticut (last 3 months)",
+            y = "Lineage frequency (%)",
+            x = "Time (days)",
+            subtitle = "% for lattest week shown subject to change"
+          )+
+          theme_light() + 
+          scale_color_manual(values=lineages_sum$color) +
+          theme(
+            plot.title = element_text(size = 15) ,
+            axis.text.x = element_text(hjust = 1, size = 10, color = "black")
+          ) 
+        
+        ggplotly(lineage_plot)
+        
       }
   
   })
