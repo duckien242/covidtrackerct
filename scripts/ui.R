@@ -14,7 +14,7 @@ library(plotly)
 library(lubridate)
 # library(leaflet)
 
-date_gisaid = as.Date("2023-02-01") # FOR FILTERING GISAID DOWNLOAD
+date_gisaid = as.Date("2023-03-15") # FOR FILTERING GISAID DOWNLOAD
 
 title = paste("Connecticut SARS-CoV-2 variant surveillance – Report", today()) ## CHANGE TO CURRENT DATE OF REPORTING
 subtitle = paste("*Last date of sequencing data upload: ",date_gisaid)
